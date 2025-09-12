@@ -1,0 +1,25 @@
+{
+  "name": "browser-automation",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/browser-chat.ts",
+    "start": "node dist/browser-chat.js",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "puppeteer": "^24.19.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
+  }
+}
