@@ -81,8 +81,13 @@ for domain in \
     while read -r ip; do
         # Skip CNAME responses and invalid IPs
         if [[ "$ip" =~ \. ]] && [[ "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-            echo "Adding $ip for $domain"
-            ipset add allowed-domains "$ip"
+            # Check if IP is already in the set
+            if ipset test allowed-domains "$ip" 2>/dev/null; then
+                echo "IP $ip for $domain already in set, skipping"
+            else
+                echo "Adding $ip for $domain"
+                ipset add allowed-domains "$ip"
+            fi
         else
             echo "Skipping invalid IP for $domain: $ip"
         fi

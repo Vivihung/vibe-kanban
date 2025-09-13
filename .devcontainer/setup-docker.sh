@@ -62,3 +62,14 @@ else
     echo "   Docker group members: $(getent group docker)"
     exit 1
 fi
+
+# Initialize firewall rules for container security
+echo ""
+echo "🔒 Initializing firewall configuration..."
+if [ -x "/usr/local/bin/init-firewall.sh" ]; then
+    sudo /usr/local/bin/init-firewall.sh
+    echo "✅ Firewall configuration completed"
+else
+    echo "⚠️  Firewall script not found or not executable at /usr/local/bin/init-firewall.sh"
+    echo "   Network security rules may not be applied"
+fi
