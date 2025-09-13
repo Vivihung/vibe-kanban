@@ -54,12 +54,45 @@ done < <(echo "$gh_ranges" | jq -r '(.web + .api + .git)[]' | aggregate -q)
 for domain in \
     "registry.npmjs.org" \
     "api.anthropic.com" \
+    "claude.ai" \
     "sentry.io" \
     "statsig.anthropic.com" \
     "statsig.com" \
     "pypi.org" \
     "files.pythonhosted.org" \
-    "bootstrap.pypa.io"; do
+    "bootstrap.pypa.io" \
+    "login.microsoftonline.com" \
+    "res.public.onecdn.static.microsoft" \
+    "graph.microsoft.com" \
+    "substrate.office.com" \
+    "config.edge.skype.com" \
+    "browser.pipe.aria.microsoft.com" \
+    "admin.microsoft.com" \
+    "arc.msn.com" \
+    "b1f266c8671f301c3dc728b8ce20c144.fp.measure.office.com" \
+    "browser.events.data.microsoft.com" \
+    "business.bing.com" \
+    "clients.config.office.net" \
+    "config.fp.measure.office.com" \
+    "ecs.office.com" \
+    "go.trouter.teams.microsoft.com" \
+    "login.live.com" \
+    "logincdn.msauth.net" \
+    "loki.delve.office.com" \
+    "m365.cloud.microsoft" \
+    "microsoft.sharepoint.com" \
+    "msit.loki.delve.office.com" \
+    "nam06.safelinks.protection.outlook.com" \
+    "outlook.office.com" \
+    "r4.res.office365.com" \
+    "res-1.cdn.office.net" \
+    "res.cdn.office.net" \
+    "substrate.svc.cloud.microsoft" \
+    "teams.microsoft.com" \
+    "tr-ooc-atm-preprod.office.com" \
+    "upload.fp.measure.office.com" \
+    "us-prod.asyncgw.teams.microsoft.com" \
+    "webshell.suite.office.com"; do
     echo "Resolving $domain..."
     
     # Try to resolve with timeout and retry logic

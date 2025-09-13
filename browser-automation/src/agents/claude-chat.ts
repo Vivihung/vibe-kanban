@@ -5,13 +5,18 @@ export const claudeChatAgent: ChatAgent = {
   url: 'https://claude.ai/',
   selectors: {
     input: [
+      'div[contenteditable="true"][role="textbox"][aria-label*="Claude"]',
+      '.ProseMirror[contenteditable="true"]',
+      '[role="textbox"][contenteditable="true"]',
+      'div[contenteditable="true"].ProseMirror',
       '[data-testid="chat-input"]',
       '[contenteditable="true"]',
       'textarea[placeholder*="message"]',
-      '[role="textbox"]',
       'div[contenteditable="true"]'
     ],
     sendButton: [
+      'button[aria-label="Send message"]',
+      'button:has(svg[viewBox="0 0 256 256"]) svg path[d*="M208.49,120.49"]',
       '[data-testid="send-button"]',
       'button[type="submit"]',
       '[aria-label*="Send"]',
