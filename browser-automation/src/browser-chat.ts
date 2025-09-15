@@ -214,9 +214,24 @@ async function sendMessageToAgent(agentName: string, message: string): Promise<v
       }
     }
 
-    // Wait for response and stream output
+    // Wait for complete response
     logger.info('Waiting for response...');
-    await streamResponse(page, agent);
+    const response = await streamResponse(page, agent);
+
+    // Log the complete response to console
+    if (response) {
+      console.log('\n' + '='.repeat(80));
+      console.log('CLAUDE RESPONSE:');
+      console.log('='.repeat(80));
+      console.log(response);
+      console.log('='.repeat(80));
+      console.log(`Response length: ${response.length} characters`);
+      console.log('='.repeat(80));
+    } else {
+      console.log('\n' + '='.repeat(80));
+      console.log('NO RESPONSE RECEIVED');
+      console.log('='.repeat(80));
+    }
 
     logger.info(`Successfully sent message to ${agent.name}`);
 
@@ -231,30 +246,52 @@ async function sendMessageToAgent(agentName: string, message: string): Promise<v
   }
 }
 
-async function streamResponse(page: Page, agent: AgentConfig): Promise<void> {
-  // Simple response streaming - look for last message content
+async function streamResponse(page: Page, _agent: AgentConfig): Promise<string> {
+  // Enhanced response selectors for Claude's interface
   const responseSelectors = [
     '[data-testid="message-content"]:last-child',
     '.message:last-child .content',
     '[role="article"]:last-child',
     '.prose:last-child',
-    '[data-message-author="assistant"]:last-child'
+    '[data-message-author="assistant"]:last-child',
+    'div[data-is-streaming="false"]:last-child',
+    'div.group:last-child [data-testid="message-content"]'
   ];
 
-  let lastResponse = '';
+  // Claude-specific selectors to detect when response is complete
+  const completionIndicators = [
+    // Copy button appears when response is complete
+    'button[aria-label="Copy"]',
+    'button[aria-label*="copy"]',
+    '[data-testid="copy-button"]',
+    // Response container is no longer in streaming state
+    '[data-is-streaming="false"]',
+    // Typing indicator disappears
+    '.typing-indicator[style*="display: none"]'
+  ];
+
+  let finalResponse = '';
   let attempts = 0;
-  const maxAttempts = 60; // 30 seconds
+  const maxAttempts = 240; // 2 minutes max wait time
+  let lastResponseLength = 0;
+  let stableResponseCount = 0;
+
+  logger.info('Waiting for Claude to start responding...');
 
   while (attempts < maxAttempts) {
     try {
       let currentResponse = '';
 
+      // Try to get the response content
       for (const selector of responseSelectors) {
         try {
           const element = await page.$(selector);
           if (element) {
-            currentResponse = await page.evaluate((el: Element) => 
-              el.textContent || (el as HTMLElement).innerText || '', element);
+            currentResponse = await page.evaluate((el: Element) => {
+              // Get text content, preserving line breaks
+              return el.textContent || (el as HTMLElement).innerText || '';
+            }, element);
+            
             if (currentResponse && currentResponse.trim()) {
               break;
             }
@@ -264,40 +301,92 @@ async function streamResponse(page: Page, agent: AgentConfig): Promise<void> {
         }
       }
 
-      if (currentResponse && currentResponse !== lastResponse) {
-        const newContent = currentResponse.substring(lastResponse.length);
-        if (newContent.trim()) {
-          process.stdout.write(newContent);
+      // If we have content, check if it's stable (not changing)
+      if (currentResponse && currentResponse.trim()) {
+        const currentLength = currentResponse.length;
+        
+        // Response length hasn't changed - it might be complete
+        if (currentLength === lastResponseLength) {
+          stableResponseCount++;
+        } else {
+          stableResponseCount = 0;
+          lastResponseLength = currentLength;
         }
-        lastResponse = currentResponse;
-      }
 
-      // Simple completion check
-      if (currentResponse && (
-        currentResponse.endsWith('.') || 
-        currentResponse.endsWith('!') || 
-        currentResponse.endsWith('?')
-      )) {
-        // Wait a bit more to ensure completion
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        break;
+        finalResponse = currentResponse;
+
+        // Check for completion indicators
+        let isComplete = false;
+        
+        // Method 1: Check for completion UI indicators
+        for (const indicator of completionIndicators) {
+          try {
+            const element = await page.$(indicator);
+            if (element) {
+              // Additional check - make sure the copy button is visible and clickable
+              const isVisible = await page.evaluate((el: Element) => {
+                const rect = el.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+              }, element);
+              
+              if (isVisible) {
+                logger.debug(`Found completion indicator: ${indicator}`);
+                isComplete = true;
+                break;
+              }
+            }
+          } catch (e) {
+            continue;
+          }
+        }
+
+        // Method 2: Response has been stable for several checks
+        if (stableResponseCount >= 6) { // 3 seconds of stability
+          logger.debug('Response appears stable, assuming complete');
+          isComplete = true;
+        }
+
+        // Method 3: Check if typing indicator is gone
+        try {
+          const typingIndicator = await page.$('.typing-indicator, [data-testid="typing-indicator"]');
+          if (!typingIndicator) {
+            // No typing indicator found, response might be complete
+            if (stableResponseCount >= 2) { // 1 second of stability without typing indicator
+              isComplete = true;
+            }
+          }
+        } catch (e) {
+          // Ignore errors checking for typing indicator
+        }
+
+        if (isComplete) {
+          // Wait a bit more to ensure truly complete
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          logger.info('Response appears complete');
+          break;
+        }
       }
 
       await new Promise(resolve => setTimeout(resolve, 500));
       attempts++;
 
+      // Log progress every 10 seconds
+      if (attempts % 20 === 0) {
+        logger.info(`Still waiting for response... (${Math.round(attempts * 0.5)}s elapsed)`);
+      }
+
     } catch (error) {
-      logger.debug('Error in response streaming:', error);
+      logger.debug('Error in response detection:', error);
       attempts++;
       await new Promise(resolve => setTimeout(resolve, 500));
     }
   }
 
   if (attempts >= maxAttempts) {
-    logger.info('\nResponse streaming timeout');
-  } else {
-    logger.info('\nResponse streaming complete');
+    logger.info('Response detection timeout - returning whatever content was found');
   }
+
+  return finalResponse;
 }
 
 // CLI Interface
@@ -341,4 +430,120 @@ if (require.main === module) {
   });
 }
 
-export { sendMessageToAgent };
+// Function specifically for getting Claude's complete response
+async function sendMessageAndGetResponse(agentName: string, message: string): Promise<string> {
+  const agent = agents[agentName.toLowerCase()];
+  if (!agent) {
+    throw new Error(`Unknown agent: ${agentName}. Available: ${Object.keys(agents).join(', ')}`);
+  }
+
+  let browser: Browser | null = null;
+
+  try {
+    logger.info(`Initializing ${agent.name} automation to get response...`);
+    
+    // Create persistent user data directory for this agent
+    const userDataDir = path.join(os.homedir(), '.browser-automation', `${agentName.toLowerCase()}-profile`);
+    
+    browser = await puppeteer.launch({
+      headless: false, // Always visible for manual login
+      userDataDir, // Enable session persistence
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--disable-gpu'
+      ]
+    });
+
+    const page: Page = await browser.newPage();
+
+    // Set viewport and user agent
+    await page.setViewport({ width: 1366, height: 768 });
+    await page.setUserAgent(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
+    );
+
+    // Navigate to the agent
+    logger.info(`Navigating to ${agent.name} at ${agent.url}...`);
+    await page.goto(agent.url, {
+      waitUntil: 'networkidle2',
+      timeout: 120000 // 2 minutes
+    });
+
+    // Wait for page to load
+    await new Promise(resolve => setTimeout(resolve, 5000));
+
+    // Check if already logged in
+    const isLoggedIn = await checkIfLoggedIn(page, agent);
+    
+    if (!isLoggedIn) {
+      // Manual login prompt
+      logger.info('Please login manually in the browser window.');
+      logger.info('Press Enter in this terminal when ready to continue...');
+      
+      await new Promise((resolve) => {
+        process.stdin.once('data', resolve);
+      });
+    }
+
+    // Find message input
+    let messageInput = null;
+    for (const selector of agent.inputSelectors) {
+      try {
+        await page.waitForSelector(selector, { timeout: 5000 });
+        messageInput = await page.$(selector);
+        if (messageInput) {
+          logger.info(`Found input with selector: ${selector}`);
+          break;
+        }
+      } catch (e) {
+        continue;
+      }
+    }
+
+    if (!messageInput) {
+      throw new Error('Message input not found');
+    }
+
+    // Send the message
+    await messageInput.click();
+    await messageInput.type(message);
+    await page.keyboard.press('Enter');
+
+    // Wait a moment then try button click as backup
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    for (const selector of agent.sendButtonSelectors) {
+      try {
+        const sendButton = await page.$(selector);
+        if (sendButton) {
+          await sendButton.click();
+          break;
+        }
+      } catch (e) {
+        continue;
+      }
+    }
+
+    // Get the complete response
+    logger.info('Waiting for complete response...');
+    const response = await streamResponse(page, agent);
+
+    return response;
+
+  } catch (error) {
+    logger.error('Error in sendMessageAndGetResponse:', error);
+    throw error;
+  } finally {
+    if (browser) {
+      logger.info('Closing browser...');
+      await browser.close();
+    }
+  }
+}
+
+export { sendMessageToAgent, sendMessageAndGetResponse };
