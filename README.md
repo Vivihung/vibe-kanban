@@ -56,19 +56,33 @@ We would prefer that ideas and changes are raised with the core team via GitHub 
 - [Node.js](https://nodejs.org/) (>=18)
 - [pnpm](https://pnpm.io/) (>=8)
 
-Additional development tools:
+1. Install Rust
+```bash 
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+. "$HOME/.cargo/env"
+```
+
+2. Install pnpm
+```bash
+npm install -g pnpm@latest-10
+```
+
+3. Additional development tools:
 ```bash
 cargo install cargo-watch
 cargo install sqlx-cli
 ```
 
 Install dependencies:
+
+The first install will take 30 min.
 ```bash
 pnpm i
 ```
 
 ### Running the dev server
 
+The first build will take 30 min.
 ```bash
 pnpm run dev
 ```
