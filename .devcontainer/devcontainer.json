@@ -1,12 +1,17 @@
 {
-    "name": "Claude Code Sandbox",
+    "name": "Vibe Kanban Dev",
     "build": {
         "dockerfile": "Dockerfile",
         "args": {
             "TZ": "${localEnv:TZ:America/Los_Angeles}"
         }
     },
-    "runArgs": ["--cap-add=NET_ADMIN", "--cap-add=NET_RAW"],
+    "runArgs": [
+        "--cap-add=NET_ADMIN", 
+        "--cap-add=NET_RAW", 
+        "--network=dev-containers-network",
+        "--network-alias=vibe-kanban"
+    ],
     "customizations": {
         "vscode": {
             "extensions": [
