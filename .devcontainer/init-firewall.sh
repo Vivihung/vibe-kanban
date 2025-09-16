@@ -58,6 +58,7 @@ for domain in \
     "sentry.io" \
     "statsig.anthropic.com" \
     "statsig.com" \
+    "sh.rustup.rs" \
     "pypi.org" \
     "files.pythonhosted.org" \
     "bootstrap.pypa.io" \
