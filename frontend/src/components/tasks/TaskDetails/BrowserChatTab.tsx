@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Send, MessageSquare, AlertCircle, CheckCircle, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useAttemptExecution } from '@/hooks';
@@ -223,9 +223,9 @@ function BrowserChatTab({ selectedAttempt }: BrowserChatTabProps) {
                       {process.started_at && new Date(process.started_at).toLocaleString()}
                     </div>
                   </div>
-                  {process.exit_code !== null && process.exit_code !== 0 && (
+                  {process.exit_code !== null && Number(process.exit_code) !== 0 && (
                     <div className="mt-2 text-sm text-destructive">
-                      Exit code: {process.exit_code}
+                      Exit code: {String(process.exit_code)}
                     </div>
                   )}
                 </CardContent>
