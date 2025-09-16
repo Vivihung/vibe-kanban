@@ -15,7 +15,7 @@ UPDATE execution_processes
   SET run_reason_new = run_reason;
 
 -- 3. Drop any indexes that mention the old column
-DROP INDEX IF EXISTS idx_execution_processes_run_reason;
+DROP INDEX IF EXISTS idx_execution_processes_type;
 
 -- 4. Remove the old column (requires SQLite 3.35+)
 ALTER TABLE execution_processes DROP COLUMN run_reason;
@@ -24,6 +24,6 @@ ALTER TABLE execution_processes DROP COLUMN run_reason;
 ALTER TABLE execution_processes
   RENAME COLUMN run_reason_new TO run_reason;
 
--- 6. Re-create the index
-CREATE INDEX idx_execution_processes_run_reason
+-- 6. Re-create the index (keep the existing name for consistency)
+CREATE INDEX idx_execution_processes_type
         ON execution_processes(run_reason);

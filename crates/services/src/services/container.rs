@@ -183,6 +183,12 @@ pub trait ContainerService {
         executor_action: &ExecutorAction,
     ) -> Result<(), ContainerError>;
 
+    async fn start_browser_chat_execution(
+        &self,
+        execution_process: &ExecutionProcess,
+        executor_action: &ExecutorAction,
+    ) -> Result<(), ContainerError>;
+
     async fn stop_execution(
         &self,
         execution_process: &ExecutionProcess,
@@ -638,9 +644,17 @@ pub trait ContainerService {
             .await?;
         }
 
-        let _ = self
-            .start_execution_inner(task_attempt, &execution_process, executor_action)
-            .await?;
+        // Handle browser chat actions differently - they don't need git worktrees
+        match executor_action.typ() {
+            ExecutorActionType::BrowserChatRequest(_) => {
+                self.start_browser_chat_execution(&execution_process, executor_action)
+                    .await?;
+            }
+            _ => {
+                self.start_execution_inner(task_attempt, &execution_process, executor_action)
+                    .await?;
+            }
+        }
 
         // Start processing normalised logs for executor requests and follow ups
         match executor_action.typ() {

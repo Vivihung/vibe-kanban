@@ -29,10 +29,29 @@ pub struct BrowserChatRequest {
 #[async_trait]
 impl Executable for BrowserChatRequest {
     async fn spawn(&self, _current_dir: &Path) -> Result<AsyncGroupChild, ExecutorError> {
-        // TODO: Implement browser chat process spawning
-        // This will integrate with the browser automation service
-        Err(ExecutorError::FollowUpNotSupported(
-            format!("BrowserChatRequest for {:?} not yet implemented", self.agent_type),
-        ))
+        use std::process::Stdio;
+        use tokio::process::Command;
+        use command_group::AsyncCommandGroup;
+        
+        // Determine the browser automation command based on agent type
+        let (script_name, agent_arg) = match self.agent_type {
+            BrowserChatAgentType::Claude => ("dist/claude-chat-cli.js", "claude"),
+            BrowserChatAgentType::M365Copilot => ("dist/m365-chat-cli.js", "m365"),
+        };
+
+        // Build the Node.js command to run browser automation
+        let mut cmd = Command::new("node");
+        cmd.arg(format!("./browser-automation/{}", script_name))
+           .arg("--agent")
+           .arg(agent_arg)
+           .arg("--message")
+           .arg(&self.message)
+           .stdin(Stdio::piped())
+           .stdout(Stdio::piped())
+           .stderr(Stdio::piped());
+
+        // Use group_spawn to create AsyncGroupChild directly
+        let child = cmd.group_spawn().map_err(ExecutorError::Io)?;
+        Ok(child)
     }
 }

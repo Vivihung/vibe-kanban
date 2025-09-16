@@ -878,6 +878,28 @@ impl ContainerService for LocalContainerService {
         Ok(())
     }
 
+    async fn start_browser_chat_execution(
+        &self,
+        execution_process: &ExecutionProcess,
+        executor_action: &ExecutorAction,
+    ) -> Result<(), ContainerError> {
+        // Browser chat doesn't need a git worktree - use current working directory
+        let current_dir = std::env::current_dir().map_err(ContainerError::Io)?;
+
+        // Create the child and stream, add to execution tracker
+        let mut child = executor_action.spawn(&current_dir).await?;
+
+        self.track_child_msgs_in_store(execution_process.id, &mut child)
+            .await;
+
+        self.add_child_to_store(execution_process.id, child).await;
+
+        // Spawn exit monitor
+        let _hn = self.spawn_exit_monitor(&execution_process.id);
+
+        Ok(())
+    }
+
     async fn stop_execution(
         &self,
         execution_process: &ExecutionProcess,

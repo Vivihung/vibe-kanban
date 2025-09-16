@@ -64,6 +64,16 @@
           "force": true
         }
       }
+    },
+    "CLAUDE_BROWSER_CHAT": {
+      "DEFAULT": {
+        "CLAUDE_BROWSER_CHAT": null
+      }
+    },
+    "M365_COPILOT_CHAT": {
+      "DEFAULT": {
+        "M365_COPILOT_CHAT": null
+      }
     }
   }
 }
