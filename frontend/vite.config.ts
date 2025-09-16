@@ -63,6 +63,7 @@ export default defineConfig({
   },
   server: {
     port: parseInt(process.env.FRONTEND_PORT || "3000"),
+    allowedHosts: ['vibe-kanban', 'localhost'],
     proxy: {
       "/api": {
         target: `http://localhost:${process.env.BACKEND_PORT || "3001"}`,
