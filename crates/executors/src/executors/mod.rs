@@ -14,13 +14,14 @@ use utils::msg_store::MsgStore;
 
 use crate::{
     executors::{
-        amp::Amp, claude::ClaudeCode, codex::Codex, cursor::Cursor, gemini::Gemini,
+        amp::Amp, browser_chat::{ClaudeBrowserChat, M365CopilotChat}, claude::ClaudeCode, codex::Codex, cursor::Cursor, gemini::Gemini,
         opencode::Opencode, qwen::QwenCode,
     },
     mcp_config::McpConfig,
 };
 
 pub mod amp;
+pub mod browser_chat;
 pub mod claude;
 pub mod codex;
 pub mod cursor;
@@ -75,6 +76,11 @@ pub enum CodingAgent {
     Opencode,
     Cursor,
     QwenCode,
+    // Browser Chat Agents - added at end for backward compatibility
+    #[serde(rename = "CLAUDE_BROWSER_CHAT")]
+    ClaudeBrowserChat,
+    #[serde(rename = "M365_COPILOT_CHAT")]
+    M365CopilotChat,
 }
 
 impl CodingAgent {
@@ -138,7 +144,7 @@ impl CodingAgent {
             Self::ClaudeCode(_) => vec![BaseAgentCapability::RestoreCheckpoint],
             Self::Amp(_) => vec![BaseAgentCapability::RestoreCheckpoint],
             Self::Codex(_) => vec![BaseAgentCapability::RestoreCheckpoint],
-            Self::Gemini(_) | Self::Opencode(_) | Self::Cursor(_) | Self::QwenCode(_) => vec![],
+            Self::Gemini(_) | Self::Opencode(_) | Self::Cursor(_) | Self::QwenCode(_) | Self::ClaudeBrowserChat(_) | Self::M365CopilotChat(_) => vec![],
         }
     }
 }

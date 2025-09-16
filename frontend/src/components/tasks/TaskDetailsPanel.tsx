@@ -14,6 +14,7 @@ import type { TabType } from '@/types/tabs';
 import DiffTab from '@/components/tasks/TaskDetails/DiffTab.tsx';
 import LogsTab from '@/components/tasks/TaskDetails/LogsTab.tsx';
 import ProcessesTab from '@/components/tasks/TaskDetails/ProcessesTab.tsx';
+import BrowserChatTab from '@/components/tasks/TaskDetails/BrowserChatTab.tsx';
 import DeleteFileConfirmationDialog from '@/components/tasks/DeleteFileConfirmationDialog.tsx';
 import TabNavigation from '@/components/tasks/TaskDetails/TabNavigation.tsx';
 import TaskDetailsToolbar from './TaskDetailsToolbar.tsx';
@@ -178,6 +179,8 @@ export function TaskDetailsPanel({
                           <DiffTab selectedAttempt={selectedAttempt} />
                         ) : activeTab === 'processes' ? (
                           <ProcessesTab attemptId={selectedAttempt?.id} />
+                        ) : activeTab === 'browserchat' ? (
+                          <BrowserChatTab selectedAttempt={selectedAttempt} />
                         ) : (
                           <LogsTab selectedAttempt={selectedAttempt} />
                         )}

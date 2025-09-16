@@ -1,4 +1,4 @@
-import { GitCompare, MessageSquare, Cog } from 'lucide-react';
+import { GitCompare, MessageSquare, Cog, Globe } from 'lucide-react';
 import { useAttemptExecution } from '@/hooks/useAttemptExecution';
 import type { TabType } from '@/types/tabs';
 import type { TaskAttempt } from 'shared/types';
@@ -22,6 +22,7 @@ function TabNavigation({
     { id: 'logs' as TabType, label: 'Logs', icon: MessageSquare },
     { id: 'diffs' as TabType, label: 'Diffs', icon: GitCompare },
     { id: 'processes' as TabType, label: 'Processes', icon: Cog },
+    { id: 'browserchat' as TabType, label: 'Browser Chat', icon: Globe },
   ];
 
   const getTabClassName = (tabId: TabType) => {

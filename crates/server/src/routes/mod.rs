@@ -6,6 +6,7 @@ use axum::{
 use crate::DeploymentImpl;
 
 pub mod auth;
+pub mod browser_chat;
 pub mod config;
 pub mod containers;
 pub mod filesystem;
@@ -35,6 +36,7 @@ pub fn router(deployment: DeploymentImpl) -> IntoMakeService<Router> {
         .merge(filesystem::router())
         .merge(events::router(&deployment))
         .nest("/images", images::routes())
+        .nest("/browser-chat", browser_chat::router(&deployment))
         .with_state(deployment);
 
     Router::new()

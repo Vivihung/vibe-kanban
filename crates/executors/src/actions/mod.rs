@@ -8,11 +8,13 @@ use ts_rs::TS;
 
 use crate::{
     actions::{
+        browser_chat_request::BrowserChatRequest,
         coding_agent_follow_up::CodingAgentFollowUpRequest,
         coding_agent_initial::CodingAgentInitialRequest, script::ScriptRequest,
     },
     executors::ExecutorError,
 };
+pub mod browser_chat_request;
 pub mod coding_agent_follow_up;
 pub mod coding_agent_initial;
 pub mod script;
@@ -24,6 +26,7 @@ pub enum ExecutorActionType {
     CodingAgentInitialRequest,
     CodingAgentFollowUpRequest,
     ScriptRequest,
+    BrowserChatRequest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]

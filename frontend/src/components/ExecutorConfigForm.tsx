@@ -17,7 +17,9 @@ type ExecutorType =
   | 'CODEX'
   | 'CURSOR'
   | 'OPENCODE'
-  | 'QWEN_CODE';
+  | 'QWEN_CODE'
+  | 'CLAUDE_BROWSER_CHAT'
+  | 'M365_COPILOT_CHAT';
 
 interface ExecutorConfigFormProps {
   executor: ExecutorType;

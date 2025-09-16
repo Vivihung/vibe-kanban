@@ -1,5 +1,6 @@
 pub mod analytics;
 pub mod auth;
+pub mod browser_chat_service;
 pub mod config;
 pub mod container;
 pub mod events;

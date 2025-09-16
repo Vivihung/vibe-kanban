@@ -10,6 +10,7 @@ export const PROCESS_RUN_REASONS = {
   CLEANUP_SCRIPT: 'cleanupscript' as ExecutionProcessRunReason,
   CODING_AGENT: 'codingagent' as ExecutionProcessRunReason,
   DEV_SERVER: 'devserver' as ExecutionProcessRunReason,
+  BROWSER_CHAT: 'browserchat' as ExecutionProcessRunReason,
 } as const;
 
 // Process statuses
@@ -34,6 +35,12 @@ export const isCodingAgent = (
   runReason: ExecutionProcessRunReason
 ): boolean => {
   return runReason === PROCESS_RUN_REASONS.CODING_AGENT;
+};
+
+export const isBrowserChat = (
+  runReason: ExecutionProcessRunReason
+): boolean => {
+  return runReason === PROCESS_RUN_REASONS.BROWSER_CHAT;
 };
 
 export const isProcessCompleted = (status: ExecutionProcessStatus): boolean => {
