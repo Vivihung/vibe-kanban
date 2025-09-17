@@ -10,7 +10,7 @@
  * Usage: node claude-chat-cli.js --agent claude --message "Your message here"
  */
 
-import { sendMessageToAgent } from './browser-chat';
+import { sendMessageToAgent, sendMessageAndGetResponse } from './browser-chat';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -36,9 +36,17 @@ async function main(): Promise<void> {
   console.log(`Starting browser automation for ${agent} with message: ${message}`);
   
   try {
-    await sendMessageToAgent(agent, message);
-    // Note: sendMessageToAgent handles response output and keeps the browser alive
-    // This process will stay alive to maintain the browser session
+    if (sessionId) {
+      // Follow-up message: use existing session
+      console.log(`Sending follow-up message to session: ${sessionId}`);
+      const response = await sendMessageAndGetResponse(agent, message, sessionId);
+      console.log('Follow-up response:', response);
+    } else {
+      // Initial message: create new session and keep browser alive
+      await sendMessageToAgent(agent, message);
+      // Note: sendMessageToAgent handles response output and keeps the browser alive
+      // This process will stay alive to maintain the browser session
+    }
   } catch (error) {
     console.error('Browser automation failed:', error);
     process.exit(1);

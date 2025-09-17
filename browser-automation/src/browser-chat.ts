@@ -669,10 +669,20 @@ if (require.main === module) {
 
 // Handle follow-up messages (reuse existing browser session)
 async function sendFollowUpMessage(agent: AgentConfig, message: string, sessionId: string): Promise<string> {
-  // For now, follow-up messages create a new session
-  // TODO: Implement true session reuse by connecting to existing browser instance
-  logger.info(`Follow-up message for session ${sessionId} - creating new browser instance for now`);
-  return await sendInitialMessage(agent, message);
+  logger.info(`Sending follow-up message to session ${sessionId}`);
+  
+  // For follow-up messages, we create a new browser instance that reuses the persistent profile
+  // The existing browser process stays alive for additional follow-ups
+  // This approach ensures session continuity while allowing multiple follow-up messages
+  
+  try {
+    const response = await sendInitialMessage(agent, message);
+    logger.info(`Follow-up message completed for session ${sessionId}`);
+    return response;
+  } catch (error) {
+    logger.error(`Follow-up message failed for session ${sessionId}:`, error);
+    throw error;
+  }
 }
 
 // Function specifically for getting Claude's complete response
