@@ -390,38 +390,61 @@ async function keepProcessAlive(browser: Browser, page: Page): Promise<void> {
       }
       
       resolve();
+      
+      // Exit the process after a short delay to ensure logging completes
+      setTimeout(() => {
+        process.exit(0);
+      }, 100);
     };
 
     // Handle termination signals gracefully
-    process.on('SIGTERM', () => gracefulShutdown('Received SIGTERM'));
-    process.on('SIGINT', () => gracefulShutdown('Received SIGINT (Ctrl+C)'));
+    process.on('SIGTERM', () => {
+      clearInterval(checkBrowserAlive);
+      clearInterval(keepAliveInterval);
+      gracefulShutdown('Received SIGTERM');
+    });
+    process.on('SIGINT', () => {
+      clearInterval(checkBrowserAlive);
+      clearInterval(keepAliveInterval);
+      gracefulShutdown('Received SIGINT (Ctrl+C)');
+    });
 
     // 🔑 NEW: Monitor browser disconnection events
     browser.on('disconnected', () => {
       logger.info('🔍 Browser process disconnected (browser closed or crashed)');
+      clearInterval(checkBrowserAlive);
+      clearInterval(keepAliveInterval);
       gracefulShutdown('Browser disconnected');
     });
 
     // 🔑 NEW: Monitor page close events  
     page.on('close', () => {
       logger.info('🗑️  Browser tab closed by user');
+      clearInterval(checkBrowserAlive);
+      clearInterval(keepAliveInterval);
       gracefulShutdown('Browser tab closed');
     });
 
     // 🔑 NEW: Monitor for page errors that might indicate tab issues
     page.on('error', (error) => {
       logger.info('❌ Page error detected:', error.message);
+      clearInterval(checkBrowserAlive);
+      clearInterval(keepAliveInterval);
       gracefulShutdown('Page error detected');
     });
 
     // 🔑 NEW: Monitor for page crashes
     page.on('pageerror', (error) => {
       logger.info('💥 Page crash detected:', error.message);
+      clearInterval(checkBrowserAlive);
+      clearInterval(keepAliveInterval);
       gracefulShutdown('Page crashed');
     });
 
     // 🔑 NEW: Monitor for browser process termination
     const checkBrowserAlive = setInterval(async () => {
+      if (isShuttingDown) return; // Don't run health checks if already shutting down
+      
       try {
         // Try to get browser version - this will fail if browser is closed
         await browser.version();
@@ -430,7 +453,9 @@ async function keepProcessAlive(browser: Browser, page: Page): Promise<void> {
         await page.title();
       } catch (error) {
         logger.info('🔍 Browser health check failed (likely closed)');
-        gracefulShutdown('Browser health check failed');
+        clearInterval(checkBrowserAlive); // Stop the health check immediately
+        clearInterval(keepAliveInterval); // Stop keep-alive logging
+        await gracefulShutdown('Browser health check failed'); // Await the shutdown
       }
     }, 10000); // Check every 10 seconds
 
