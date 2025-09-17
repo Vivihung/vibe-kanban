@@ -11,7 +11,7 @@ use axum::{
 use db::models::{
     image::TaskImage,
     project::Project,
-    task::{CreateTask, Task, TaskWithAttemptStatus, UpdateTask},
+    task::{CreateTask, Task, TaskStatus, TaskWithAttemptStatus, UpdateTask},
     task_attempt::{CreateTaskAttempt, TaskAttempt},
 };
 use deployment::Deployment;
@@ -182,12 +182,16 @@ pub async fn update_task(
     Json(payload): Json<UpdateTask>,
 ) -> Result<ResponseJson<ApiResponse<Task>>, ApiError> {
     // Use existing values if not provided in update
-    let title = payload.title.unwrap_or(existing_task.title);
-    let description = payload.description.or(existing_task.description);
-    let status = payload.status.unwrap_or(existing_task.status);
+    let title = payload.title.unwrap_or(existing_task.title.clone());
+    let description = payload.description.or(existing_task.description.clone());
+    let status = payload.status.unwrap_or(existing_task.status.clone());
     let parent_task_attempt = payload
         .parent_task_attempt
         .or(existing_task.parent_task_attempt);
+
+    // Check if task status is changing to Done or Cancelled
+    let status_changed_to_terminal = existing_task.status != status 
+        && (status == TaskStatus::Done || status == TaskStatus::Cancelled);
 
     let task = Task::update(
         &deployment.db().pool,
@@ -195,10 +199,33 @@ pub async fn update_task(
         existing_task.project_id,
         title,
         description,
-        status,
+        status.clone(),
         parent_task_attempt,
     )
     .await?;
+
+    // Terminate any running processes if task was marked as Done or Cancelled
+    if status_changed_to_terminal {
+        tracing::info!("Task {} status changed to {:?}, terminating running processes", task.id, &status);
+        
+        // Get all task attempts for this task
+        let task_attempts = TaskAttempt::fetch_all(&deployment.db().pool, Some(task.id))
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!("Failed to fetch task attempts for task {}: {}", task.id, e);
+                Vec::new()
+            });
+        
+        // Check if there are any task attempts with running processes
+        if !task_attempts.is_empty() && deployment.container().has_running_processes(task.id).await? {
+            if let Err(e) = deployment.container().stop_task_processes(&task_attempts).await {
+                tracing::error!("Failed to stop processes for task {}: {}", task.id, e);
+                // Continue execution - don't fail the task update if process termination fails
+            } else {
+                tracing::info!("Successfully terminated running processes for task {}", task.id);
+            }
+        }
+    }
 
     if let Some(image_ids) = &payload.image_ids {
         TaskImage::delete_by_task_id(&deployment.db().pool, task.id).await?;
