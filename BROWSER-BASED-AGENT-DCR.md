@@ -123,28 +123,6 @@ main();
 - **No pooling**: Simple browser launch per execution
 - **Basic cleanup**: Browser closes after task completion
 
-## 1-Day Implementation Plan
-
-### Hour 1-2: Basic Setup
-1. Add `BrowserChat` variant to `CodingAgent` enum
-2. Create basic `BrowserChat` struct implementing `StandardCodingAgentExecutor`
-3. Add Node.js script dependency to project
-
-### Hour 3-4: Puppeteer Script
-1. Create `browser_chat.js` with basic Puppeteer automation
-2. Implement manual login workflow
-3. Basic message sending to Claude Chat
-
-### Hour 5-6: Integration
-1. Wire up browser executor to spawn Node.js script
-2. Test stdout streaming through existing SSE infrastructure
-3. Basic error handling for script failures
-
-### Hour 7-8: Testing & Polish
-1. End-to-end testing with manual login
-2. Debug any streaming issues
-3. Basic documentation
-
 ## Minimal Dependencies
 
 ### System Requirements
