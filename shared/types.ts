@@ -269,3 +269,11 @@ export type ToolResultValueType = { "type": "markdown" } | { "type": "json" };
 export type PatchType = { "type": "NORMALIZED_ENTRY", "content": NormalizedEntry } | { "type": "STDOUT", "content": string } | { "type": "STDERR", "content": string } | { "type": "DIFF", "content": Diff };
 
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null;
+
+export type BrowserChatAgentType = "claude" | "m365";
+
+export type BrowserChatRequest = { message: string, agent_type: BrowserChatAgentType, executor_profile_id: ExecutorProfileId, session_id: string | null, };
+
+export type ClaudeBrowserChat = {};
+
+export type M365CopilotChat = {};

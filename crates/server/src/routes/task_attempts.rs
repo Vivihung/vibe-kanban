@@ -185,16 +185,27 @@ pub async fn follow_up(
         "Couldn't find a prior session_id, please create a new task attempt".to_string(),
     )))?;
 
-    // Get ExecutionProcess for profile data
-    let latest_execution_process = ExecutionProcess::find_latest_by_task_attempt_and_run_reason(
-        &deployment.db().pool,
-        task_attempt.id,
-        &ExecutionProcessRunReason::CodingAgent,
-    )
-    .await?
-    .ok_or(ApiError::TaskAttempt(TaskAttemptError::ValidationError(
-        "Couldn't find initial coding agent process, has it run yet?".to_string(),
-    )))?;
+    // Try to find either coding agent or browser chat process
+    let latest_execution_process = match ExecutionProcess::find_latest_by_task_attempt_and_run_reason(
+            &deployment.db().pool,
+            task_attempt.id,
+            &ExecutionProcessRunReason::CodingAgent,
+        )
+        .await?
+    {
+        Some(process) => process,
+        None => {
+            ExecutionProcess::find_latest_by_task_attempt_and_run_reason(
+                &deployment.db().pool,
+                task_attempt.id,
+                &ExecutionProcessRunReason::BrowserChat,
+            )
+            .await?
+            .ok_or(ApiError::TaskAttempt(TaskAttemptError::ValidationError(
+                "Couldn't find initial coding agent or browser chat process, has it run yet?".to_string(),
+            )))?
+        }
+    };
     let initial_executor_profile_id = match &latest_execution_process
         .executor_action()
         .map_err(|e| ApiError::TaskAttempt(TaskAttemptError::ValidationError(e.to_string())))?
@@ -204,6 +215,9 @@ pub async fn follow_up(
             Ok(request.executor_profile_id.clone())
         }
         ExecutorActionType::CodingAgentFollowUpRequest(request) => {
+            Ok(request.executor_profile_id.clone())
+        }
+        ExecutorActionType::BrowserChatRequest(request) => {
             Ok(request.executor_profile_id.clone())
         }
         _ => Err(ApiError::TaskAttempt(TaskAttemptError::ValidationError(
@@ -256,23 +270,52 @@ pub async fn follow_up(
         ))
     });
 
-    let follow_up_request = CodingAgentFollowUpRequest {
-        prompt,
-        session_id,
-        executor_profile_id,
+    // Determine if this is a browser chat or coding agent based on the latest process
+    let (follow_up_action, run_reason) = match &latest_execution_process
+        .executor_action()
+        .map_err(|e| ApiError::TaskAttempt(TaskAttemptError::ValidationError(e.to_string())))?
+        .typ
+    {
+        ExecutorActionType::BrowserChatRequest(_) => {
+            // For browser chat, reuse BrowserChatRequest with session ID
+            use executors::actions::browser_chat_request::{BrowserChatRequest, BrowserChatAgentType};
+            let browser_chat_request = BrowserChatRequest {
+                message: prompt,
+                agent_type: match format!("{}", initial_executor_profile_id.executor).as_str() {
+                    "CLAUDE_BROWSER_CHAT" => BrowserChatAgentType::Claude,
+                    "M365_COPILOT_CHAT" => BrowserChatAgentType::M365Copilot,
+                    _ => BrowserChatAgentType::Claude, // Default fallback
+                },
+                executor_profile_id: executor_profile_id.clone(),
+                session_id: Some(session_id),
+            };
+            let action = ExecutorAction::new(
+                ExecutorActionType::BrowserChatRequest(browser_chat_request),
+                cleanup_action,
+            );
+            (action, ExecutionProcessRunReason::BrowserChat)
+        }
+        _ => {
+            // Default to coding agent follow-up
+            let follow_up_request = CodingAgentFollowUpRequest {
+                prompt,
+                session_id,
+                executor_profile_id,
+            };
+            let action = ExecutorAction::new(
+                ExecutorActionType::CodingAgentFollowUpRequest(follow_up_request),
+                cleanup_action,
+            );
+            (action, ExecutionProcessRunReason::CodingAgent)
+        }
     };
-
-    let follow_up_action = ExecutorAction::new(
-        ExecutorActionType::CodingAgentFollowUpRequest(follow_up_request),
-        cleanup_action,
-    );
 
     let execution_process = deployment
         .container()
         .start_execution(
             &task_attempt,
             &follow_up_action,
-            &ExecutionProcessRunReason::CodingAgent,
+            &run_reason,
         )
         .await?;
 

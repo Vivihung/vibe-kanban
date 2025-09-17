@@ -24,6 +24,8 @@ pub struct BrowserChatRequest {
     pub message: String,
     pub agent_type: BrowserChatAgentType,
     pub executor_profile_id: ExecutorProfileId,
+    /// Optional session ID for follow-up messages to existing browser sessions
+    pub session_id: Option<String>,
 }
 
 #[async_trait]
@@ -45,8 +47,14 @@ impl Executable for BrowserChatRequest {
            .arg("--agent")
            .arg(agent_arg)
            .arg("--message")
-           .arg(&self.message)
-           .stdin(Stdio::piped())
+           .arg(&self.message);
+        
+        // Add session ID for follow-up messages
+        if let Some(session_id) = &self.session_id {
+            cmd.arg("--session-id").arg(session_id);
+        }
+        
+        cmd.stdin(Stdio::piped())
            .stdout(Stdio::piped())
            .stderr(Stdio::piped());
 

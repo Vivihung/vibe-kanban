@@ -16,6 +16,7 @@ import { sendMessageAndGetResponse } from './browser-chat';
 const args = process.argv.slice(2);
 let agent = 'claude';
 let message = 'Hello';
+let sessionId: string | undefined;
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--agent' && i + 1 < args.length) {
@@ -23,6 +24,9 @@ for (let i = 0; i < args.length; i++) {
     i++;
   } else if (args[i] === '--message' && i + 1 < args.length) {
     message = args[i + 1];
+    i++;
+  } else if (args[i] === '--session-id' && i + 1 < args.length) {
+    sessionId = args[i + 1];
     i++;
   }
 }
@@ -32,7 +36,7 @@ async function main(): Promise<void> {
   console.log(`Starting browser automation for ${agent} with message: ${message}`);
   
   try {
-    const response = await sendMessageAndGetResponse(agent, message);
+    const response = await sendMessageAndGetResponse(agent, message, sessionId);
     console.log('Response received:', response);
   } catch (error) {
     console.error('Browser automation failed:', error);

@@ -59,6 +59,7 @@ pub async fn send_browser_chat_message(
         message: request.message,
         agent_type: request.agent_type,
         executor_profile_id: request.executor_profile_id,
+        session_id: None, // Initial request has no session ID
     };
 
     let executor_action = ExecutorAction::new(

@@ -52,15 +52,19 @@ export function TaskFollowUpSection({
   const defaultFollowUpVariant = useMemo(() => {
     if (!processes.length) return null;
 
-    // Find most recent coding agent process with variant
+    // Find most recent coding agent or browser chat process with variant
     const latestProfile = processes
-      .filter((p) => p.run_reason === 'codingagent')
+      .filter((p) => p.run_reason === 'codingagent' || p.run_reason === 'browserchat')
       .reverse()
       .map((process) => {
         if (
           process.executor_action?.typ.type === 'CodingAgentInitialRequest' ||
           process.executor_action?.typ.type === 'CodingAgentFollowUpRequest'
         ) {
+          return process.executor_action?.typ.executor_profile_id;
+        }
+        // Handle browser chat processes
+        if (process.executor_action?.typ.type === 'BrowserChatRequest') {
           return process.executor_action?.typ.executor_profile_id;
         }
         return undefined;

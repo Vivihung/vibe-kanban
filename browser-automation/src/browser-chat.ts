@@ -234,16 +234,52 @@ async function sendMessageToAgent(agentName: string, message: string): Promise<v
     }
 
     logger.info(`Successfully sent message to ${agent.name}`);
+    logger.info('Browser tab is left open for follow-up questions.');
+    logger.info('This process will stay alive to keep the browser open.');
+    logger.info('The browser will close automatically when the task is deleted from vibe-kanban.');
+
+    // Keep the process alive to maintain browser session
+    await keepProcessAlive();
 
   } catch (error) {
     logger.error('Error:', error);
-    throw error;
-  } finally {
+    // Close browser on error to avoid orphaned processes
     if (browser) {
-      logger.info('Closing browser...');
+      logger.info('Closing browser due to error...');
       await browser.close();
     }
+    throw error;
+  } finally {
+    // Browser will be closed by keepProcessAlive when needed
   }
+}
+
+async function keepProcessAlive(): Promise<void> {
+  logger.info('Process is now running in keep-alive mode...');
+  
+  // Keep process alive indefinitely until killed by parent or system signals
+  return new Promise((resolve) => {
+    // Handle termination signals gracefully
+    process.on('SIGTERM', () => {
+      logger.info('Received SIGTERM, shutting down gracefully...');
+      resolve();
+    });
+    
+    process.on('SIGINT', () => {
+      logger.info('Received SIGINT (Ctrl+C), shutting down gracefully...');
+      resolve();
+    });
+
+    // Log keep-alive status every 5 minutes
+    const keepAliveInterval = setInterval(() => {
+      logger.debug('Browser automation process still alive, keeping browser session open...');
+    }, 5 * 60 * 1000); // 5 minutes
+
+    // Clean up interval when process ends
+    process.on('exit', () => {
+      clearInterval(keepAliveInterval);
+    });
+  });
 }
 
 async function streamResponse(page: Page, _agent: AgentConfig): Promise<string> {
@@ -430,20 +466,39 @@ if (require.main === module) {
   });
 }
 
+// Handle follow-up messages (reuse existing browser session)
+async function sendFollowUpMessage(agent: AgentConfig, message: string, sessionId: string): Promise<string> {
+  // For now, follow-up messages create a new session
+  // TODO: Implement true session reuse by connecting to existing browser instance
+  logger.info(`Follow-up message for session ${sessionId} - creating new browser instance for now`);
+  return await sendInitialMessage(agent, message);
+}
+
 // Function specifically for getting Claude's complete response
-async function sendMessageAndGetResponse(agentName: string, message: string): Promise<string> {
+async function sendMessageAndGetResponse(agentName: string, message: string, sessionId?: string): Promise<string> {
   const agent = agents[agentName.toLowerCase()];
   if (!agent) {
     throw new Error(`Unknown agent: ${agentName}. Available: ${Object.keys(agents).join(', ')}`);
   }
 
+  if (sessionId) {
+    logger.info(`Using session ID: ${sessionId} for follow-up message`);
+    return await sendFollowUpMessage(agent, message, sessionId);
+  } else {
+    logger.info('Starting new browser chat session');
+    return await sendInitialMessage(agent, message);
+  }
+}
+
+// Initial message (creates new browser session)
+async function sendInitialMessage(agent: AgentConfig, message: string): Promise<string> {
   let browser: Browser | null = null;
 
   try {
     logger.info(`Initializing ${agent.name} automation to get response...`);
     
     // Create persistent user data directory for this agent
-    const userDataDir = path.join(os.homedir(), '.browser-automation', `${agentName.toLowerCase()}-profile`);
+    const userDataDir = path.join(os.homedir(), '.browser-automation', `${agent.name.toLowerCase().replace(/\s+/g, '-')}-profile`);
     
     browser = await puppeteer.launch({
       headless: false, // Always visible for manual login

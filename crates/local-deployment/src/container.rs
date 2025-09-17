@@ -56,11 +56,22 @@ use uuid::Uuid;
 
 use crate::command;
 
+/// Browser session metadata for tracking persistent browser processes
+#[derive(Debug, Clone)]
+pub struct BrowserSession {
+    pub session_id: String,
+    pub task_attempt_id: Uuid,
+    pub execution_process_id: Uuid,
+    pub agent_type: String,
+    pub created_at: std::time::Instant,
+}
+
 #[derive(Clone)]
 pub struct LocalContainerService {
     db: DBService,
     child_store: Arc<RwLock<HashMap<Uuid, Arc<RwLock<AsyncGroupChild>>>>>,
     msg_stores: Arc<RwLock<HashMap<Uuid, Arc<MsgStore>>>>,
+    browser_sessions: Arc<RwLock<HashMap<String, BrowserSession>>>, // session_id -> BrowserSession
     config: Arc<RwLock<Config>>,
     git: GitService,
     image_service: ImageService,
@@ -77,11 +88,13 @@ impl LocalContainerService {
         analytics: Option<AnalyticsContext>,
     ) -> Self {
         let child_store = Arc::new(RwLock::new(HashMap::new()));
+        let browser_sessions = Arc::new(RwLock::new(HashMap::new()));
 
         LocalContainerService {
             db,
             child_store,
             msg_stores,
+            browser_sessions,
             config,
             git,
             image_service,
@@ -102,6 +115,32 @@ impl LocalContainerService {
     pub async fn remove_child_from_store(&self, id: &Uuid) {
         let mut map = self.child_store.write().await;
         map.remove(id);
+    }
+
+    /// Add a browser session for tracking
+    pub async fn add_browser_session(&self, session: BrowserSession) {
+        let mut sessions = self.browser_sessions.write().await;
+        sessions.insert(session.session_id.clone(), session);
+    }
+
+    /// Get browser session by session ID
+    pub async fn get_browser_session(&self, session_id: &str) -> Option<BrowserSession> {
+        let sessions = self.browser_sessions.read().await;
+        sessions.get(session_id).cloned()
+    }
+
+    /// Remove browser session
+    pub async fn remove_browser_session(&self, session_id: &str) {
+        let mut sessions = self.browser_sessions.write().await;
+        sessions.remove(session_id);
+    }
+
+    /// Find browser session by task attempt ID
+    pub async fn find_browser_session_by_task_attempt(&self, task_attempt_id: Uuid) -> Option<BrowserSession> {
+        let sessions = self.browser_sessions.read().await;
+        sessions.values()
+            .find(|session| session.task_attempt_id == task_attempt_id)
+            .cloned()
     }
 
     /// A context is finalized when
@@ -885,6 +924,28 @@ impl ContainerService for LocalContainerService {
     ) -> Result<(), ContainerError> {
         // Browser chat doesn't need a git worktree - use current working directory
         let current_dir = std::env::current_dir().map_err(ContainerError::Io)?;
+
+        // Extract browser chat request details
+        if let executors::actions::ExecutorActionType::BrowserChatRequest(browser_request) = executor_action.typ() {
+            // Generate session ID for this browser chat (reuse existing or create new)
+            let session_id = browser_request.session_id.clone()
+                .unwrap_or_else(|| format!("browser_session_{}", short_uuid(&uuid::Uuid::new_v4())));
+
+            // Create browser session metadata
+            let browser_session = BrowserSession {
+                session_id: session_id.clone(),
+                task_attempt_id: execution_process.task_attempt_id,
+                execution_process_id: execution_process.id,
+                agent_type: format!("{:?}", browser_request.agent_type),
+                created_at: std::time::Instant::now(),
+            };
+
+            // Store the session for tracking
+            self.add_browser_session(browser_session).await;
+            
+            tracing::info!("Created browser session {} for task attempt {}", 
+                session_id, execution_process.task_attempt_id);
+        }
 
         // Create the child and stream, add to execution tracker
         let mut child = executor_action.spawn(&current_dir).await?;

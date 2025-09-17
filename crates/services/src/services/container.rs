@@ -253,6 +253,7 @@ pub trait ContainerService {
                     message: cleaned_message,
                     agent_type,
                     executor_profile_id,
+                    session_id: None, // Initial request, no session yet
                 }),
                 cleanup_action,
             )

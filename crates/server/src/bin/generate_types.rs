@@ -76,9 +76,13 @@ fn generate_types_content() -> String {
         executors::executors::cursor::Cursor::decl(),
         executors::executors::opencode::Opencode::decl(),
         executors::executors::qwen::QwenCode::decl(),
+        executors::executors::browser_chat::ClaudeBrowserChat::decl(),
+        executors::executors::browser_chat::M365CopilotChat::decl(),
         executors::executors::AppendPrompt::decl(),
         executors::actions::coding_agent_initial::CodingAgentInitialRequest::decl(),
         executors::actions::coding_agent_follow_up::CodingAgentFollowUpRequest::decl(),
+        executors::actions::browser_chat_request::BrowserChatRequest::decl(),
+        executors::actions::browser_chat_request::BrowserChatAgentType::decl(),
         server::routes::task_attempts::CreateTaskAttemptBody::decl(),
         server::routes::task_attempts::RebaseTaskAttemptRequest::decl(),
         server::routes::task_attempts::RestoreAttemptRequest::decl(),
@@ -167,6 +171,9 @@ fn generate_schemas() -> Result<(), Box<dyn std::error::Error>> {
     write_schema::<executors::executors::cursor::Cursor>("cursor", schemas_dir)?;
     write_schema::<executors::executors::opencode::Opencode>("opencode", schemas_dir)?;
     write_schema::<executors::executors::qwen::QwenCode>("qwen_code", schemas_dir)?;
+    // Note: Browser chat schemas skipped for now
+    // write_schema::<executors::executors::browser_chat::ClaudeBrowserChat>("claude_browser_chat", schemas_dir)?;
+    // write_schema::<executors::executors::browser_chat::M365CopilotChat>("m365_copilot_chat", schemas_dir)?;
 
     Ok(())
 }
