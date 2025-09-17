@@ -169,12 +169,6 @@ pub async fn follow_up(
 ) -> Result<ResponseJson<ApiResponse<ExecutionProcess>>, ApiError> {
     tracing::info!("{:?}", task_attempt);
 
-    // Ensure worktree exists (recreate if needed for cold task support)
-    deployment
-        .container()
-        .ensure_container_exists(&task_attempt)
-        .await?;
-
     // Get latest session id (ignoring dropped)
     let session_id = ExecutionProcess::find_latest_session_id_by_task_attempt(
         &deployment.db().pool,
@@ -242,20 +236,43 @@ pub async fn follow_up(
         .await?
         .ok_or(SqlxError::RowNotFound)?;
 
+    // First determine if this is a browser chat agent to decide on container handling
+    let is_browser_chat_agent = matches!(
+        &latest_execution_process
+            .executor_action()
+            .map_err(|e| ApiError::TaskAttempt(TaskAttemptError::ValidationError(e.to_string())))?
+            .typ,
+        ExecutorActionType::BrowserChatRequest(_)
+    );
+
+    // Only ensure container exists for non-browser agents (coding agents need git worktrees)
+    if !is_browser_chat_agent {
+        deployment
+            .container()
+            .ensure_container_exists(&task_attempt)
+            .await?;
+    } else {
+        tracing::info!("Skipping container creation for browser chat agent follow-up");
+    }
+
     let mut prompt = payload.prompt;
     if let Some(image_ids) = &payload.image_ids {
         TaskImage::associate_many(&deployment.db().pool, task.id, image_ids).await?;
 
-        // Copy new images from the image cache to the worktree
-        if let Some(container_ref) = &task_attempt.container_ref {
-            let worktree_path = std::path::PathBuf::from(container_ref);
-            deployment
-                .image()
-                .copy_images_by_ids_to_worktree(&worktree_path, image_ids)
-                .await?;
+        // Copy new images from the image cache to the worktree (only for non-browser agents)
+        if !is_browser_chat_agent {
+            if let Some(container_ref) = &task_attempt.container_ref {
+                let worktree_path = std::path::PathBuf::from(container_ref);
+                deployment
+                    .image()
+                    .copy_images_by_ids_to_worktree(&worktree_path, image_ids)
+                    .await?;
 
-            // Update image paths in prompt with full worktree path
-            prompt = ImageService::canonicalise_image_paths(&prompt, &worktree_path);
+                // Update image paths in prompt with full worktree path
+                prompt = ImageService::canonicalise_image_paths(&prompt, &worktree_path);
+            }
+        } else {
+            tracing::info!("Skipping image processing for browser chat agent follow-up");
         }
     }
 
