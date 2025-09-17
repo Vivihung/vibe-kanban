@@ -26,10 +26,11 @@ use db::{
 use executors::{
     actions::{
         ExecutorAction, ExecutorActionType,
+        browser_chat_request::{BrowserChatRequest, BrowserChatAgentType},
         coding_agent_initial::CodingAgentInitialRequest,
         script::{ScriptContext, ScriptRequest, ScriptRequestLanguage},
     },
-    executors::{ExecutorError, StandardCodingAgentExecutor},
+    executors::{BaseCodingAgent, ExecutorError, StandardCodingAgentExecutor},
     logs::{NormalizedEntry, NormalizedEntryType, utils::patch::ConversationPatch},
     profile::{ExecutorConfigs, ExecutorProfileId},
 };
@@ -207,6 +208,67 @@ pub trait ContainerService {
         &self,
         task_attempt: &TaskAttempt,
     ) -> Result<futures::stream::BoxStream<'static, Result<Event, std::io::Error>>, ContainerError>;
+
+    /// Helper function to determine if an executor profile represents a browser chat agent
+    fn is_browser_chat_agent(executor_profile_id: &ExecutorProfileId) -> Option<BrowserChatAgentType> {
+        match executor_profile_id.executor {
+            BaseCodingAgent::ClaudeBrowserChat => Some(BrowserChatAgentType::Claude),
+            BaseCodingAgent::M365CopilotChat => Some(BrowserChatAgentType::M365Copilot),
+            _ => None,
+        }
+    }
+
+    /// Clean up prompt for browser chat agents by removing "Title:" prefix and extracting description
+    fn clean_browser_chat_message(prompt: &str) -> String {
+        // Check if prompt has "Title: <title>\n\nDescription:<description>" format
+        if prompt.starts_with("Title: ") {
+            // Look for "Description:" marker
+            if let Some(desc_start) = prompt.find("Description:") {
+                // Extract everything after "Description:" and trim
+                prompt[desc_start + "Description:".len()..].trim().to_string()
+            } else {
+                // No description found, extract title without "Title: " prefix
+                prompt.strip_prefix("Title: ").unwrap_or(prompt).trim().to_string()
+            }
+        } else {
+            // Not in expected format, return as-is
+            prompt.to_string()
+        }
+    }
+
+    /// Create the appropriate executor action based on the executor type
+    fn create_executor_action(
+        prompt: String,
+        executor_profile_id: ExecutorProfileId,
+        cleanup_action: Option<Box<ExecutorAction>>,
+    ) -> ExecutorAction {
+        if let Some(agent_type) = Self::is_browser_chat_agent(&executor_profile_id) {
+            // Browser chat agent - use BrowserChatRequest with cleaned message
+            let cleaned_message = Self::clean_browser_chat_message(&prompt);
+            tracing::info!("Creating BrowserChatRequest for executor: {:?} with agent_type: {:?}", 
+                executor_profile_id.executor, agent_type);
+            tracing::debug!("Cleaned browser message: '{}' -> '{}'", prompt, cleaned_message);
+            ExecutorAction::new(
+                ExecutorActionType::BrowserChatRequest(BrowserChatRequest {
+                    message: cleaned_message,
+                    agent_type,
+                    executor_profile_id,
+                }),
+                cleanup_action,
+            )
+        } else {
+            // Regular coding agent - use CodingAgentInitialRequest
+            tracing::info!("Creating CodingAgentInitialRequest for executor: {:?}", 
+                executor_profile_id.executor);
+            ExecutorAction::new(
+                ExecutorActionType::CodingAgentInitialRequest(CodingAgentInitialRequest {
+                    prompt,
+                    executor_profile_id,
+                }),
+                cleanup_action,
+            )
+        }
+    }
 
     /// Fetch the MsgStore for a given execution ID, panicking if missing.
     async fn get_msg_store_by_id(&self, uuid: &Uuid) -> Option<Arc<MsgStore>> {
@@ -409,6 +471,14 @@ pub trait ContainerService {
 
                     executor.normalize_logs(temp_store.clone(), &current_dir);
                 }
+                ExecutorActionType::BrowserChatRequest(request) => {
+                    // Browser chat requests have simple logging - just add the user message
+                    let user_entry = create_user_message(request.message.clone());
+                    temp_store.push_patch(ConversationPatch::add_normalized_entry(0, user_entry));
+                    
+                    // No complex log normalization needed for browser chat
+                    tracing::debug!("Browser chat log normalization completed for agent: {:?}", request.agent_type);
+                }
                 _ => {
                     tracing::debug!(
                         "Executor action doesn't support log normalization: {:?}",
@@ -509,8 +579,13 @@ pub trait ContainerService {
         task_attempt: &TaskAttempt,
         executor_profile_id: ExecutorProfileId,
     ) -> Result<ExecutionProcess, ContainerError> {
-        // Create container
-        self.create(task_attempt).await?;
+        // Create container only for non-browser agents (browser agents don't need git worktrees)
+        if Self::is_browser_chat_agent(&executor_profile_id).is_none() {
+            self.create(task_attempt).await?;
+        } else {
+            tracing::info!("Skipping worktree creation for browser chat agent: {:?}", 
+                executor_profile_id.executor);
+        }
 
         // Get parent task
         let task = task_attempt
@@ -529,14 +604,20 @@ pub trait ContainerService {
             .await?
             .ok_or(SqlxError::RowNotFound)?;
 
-        // TODO: this implementation will not work in cloud
-        let worktree_path = PathBuf::from(
-            task_attempt
-                .container_ref
-                .as_ref()
-                .ok_or_else(|| ContainerError::Other(anyhow!("Container ref not found")))?,
-        );
-        let prompt = ImageService::canonicalise_image_paths(&task.to_prompt(), &worktree_path);
+        // Handle prompt creation differently for browser agents vs coding agents
+        let prompt = if Self::is_browser_chat_agent(&executor_profile_id).is_some() {
+            // Browser agents don't need worktree paths, use task prompt directly
+            task.to_prompt()
+        } else {
+            // Coding agents need worktree paths for image canonicalization
+            let worktree_path = PathBuf::from(
+                task_attempt
+                    .container_ref
+                    .as_ref()
+                    .ok_or_else(|| ContainerError::Other(anyhow!("Container ref not found")))?,
+            );
+            ImageService::canonicalise_image_paths(&task.to_prompt(), &worktree_path)
+        };
 
         let cleanup_action = project.cleanup_script.map(|script| {
             Box::new(ExecutorAction::new(
@@ -557,12 +638,10 @@ pub trait ContainerService {
                     language: ScriptRequestLanguage::Bash,
                     context: ScriptContext::SetupScript,
                 }),
-                // once the setup script is done, run the initial coding agent request
-                Some(Box::new(ExecutorAction::new(
-                    ExecutorActionType::CodingAgentInitialRequest(CodingAgentInitialRequest {
-                        prompt,
-                        executor_profile_id: executor_profile_id.clone(),
-                    }),
+                // once the setup script is done, run the initial agent request
+                Some(Box::new(Self::create_executor_action(
+                    prompt,
+                    executor_profile_id.clone(),
                     cleanup_action,
                 ))),
             );
@@ -574,18 +653,23 @@ pub trait ContainerService {
             )
             .await?
         } else {
-            let executor_action = ExecutorAction::new(
-                ExecutorActionType::CodingAgentInitialRequest(CodingAgentInitialRequest {
-                    prompt,
-                    executor_profile_id: executor_profile_id.clone(),
-                }),
+            let executor_action = Self::create_executor_action(
+                prompt,
+                executor_profile_id.clone(),
                 cleanup_action,
             );
+            
+            // Use appropriate run reason based on executor type
+            let run_reason = if Self::is_browser_chat_agent(&executor_profile_id).is_some() {
+                &ExecutionProcessRunReason::BrowserChat
+            } else {
+                &ExecutionProcessRunReason::CodingAgent
+            };
 
             self.start_execution(
                 &task_attempt,
                 &executor_action,
-                &ExecutionProcessRunReason::CodingAgent,
+                run_reason,
             )
             .await?
         };
@@ -626,6 +710,9 @@ pub trait ContainerService {
             ExecutorActionType::CodingAgentFollowUpRequest(follow_up_request) => {
                 Some(follow_up_request.prompt.clone())
             }
+            ExecutorActionType::BrowserChatRequest(browser_chat_request) => {
+                Some(browser_chat_request.message.clone())
+            }
             _ => None,
         } {
             let create_executor_data = CreateExecutorSession {
@@ -646,11 +733,14 @@ pub trait ContainerService {
 
         // Handle browser chat actions differently - they don't need git worktrees
         match executor_action.typ() {
-            ExecutorActionType::BrowserChatRequest(_) => {
+            ExecutorActionType::BrowserChatRequest(browser_chat_req) => {
+                tracing::info!("Routing to browser chat execution for agent: {:?}", 
+                    browser_chat_req.agent_type);
                 self.start_browser_chat_execution(&execution_process, executor_action)
                     .await?;
             }
             _ => {
+                tracing::info!("Routing to standard execution (will create worktree)");
                 self.start_execution_inner(task_attempt, &execution_process, executor_action)
                     .await?;
             }
@@ -700,6 +790,15 @@ pub trait ContainerService {
                             request.get_executor_profile_id()
                         );
                     }
+                }
+            }
+            ExecutorActionType::BrowserChatRequest(request) => {
+                if let Some(msg_store) = self.get_msg_store_by_id(&execution_process.id).await {
+                    // Browser chat requests have simple logging - just add the user message
+                    let user_entry = create_user_message(request.message.clone());
+                    msg_store.push_patch(ConversationPatch::add_normalized_entry(0, user_entry));
+                    
+                    tracing::debug!("Browser chat log normalization setup for agent: {:?}", request.agent_type);
                 }
             }
             _ => {}
