@@ -348,10 +348,10 @@ async function sendMessageToAgent(agentName: string, message: string): Promise<v
     logger.info(`Successfully sent message to ${agent.name}`);
     logger.info('Browser tab is left open for follow-up questions.');
     logger.info('This process will stay alive to keep the browser open.');
-    logger.info('The browser will close automatically when the task is deleted from vibe-kanban.');
+    logger.info('The process will end automatically if you close the browser tab or when the task is deleted from vibe-kanban.');
 
     // Keep the process alive to maintain browser session
-    await keepProcessAlive();
+    await keepProcessAlive(browser, page);
 
   } catch (error) {
     logger.error('Error:', error);
@@ -366,31 +366,95 @@ async function sendMessageToAgent(agentName: string, message: string): Promise<v
   }
 }
 
-async function keepProcessAlive(): Promise<void> {
+async function keepProcessAlive(browser: Browser, page: Page): Promise<void> {
   logger.info('Process is now running in keep-alive mode...');
+  logger.info('Monitoring browser for tab/window close events...');
   
-  // Keep process alive indefinitely until killed by parent or system signals
+  // Keep process alive indefinitely until killed by parent, system signals, or browser closed
   return new Promise((resolve) => {
-    // Handle termination signals gracefully
-    process.on('SIGTERM', () => {
-      logger.info('Received SIGTERM, shutting down gracefully...');
-      resolve();
-    });
+    let isShuttingDown = false;
     
-    process.on('SIGINT', () => {
-      logger.info('Received SIGINT (Ctrl+C), shutting down gracefully...');
+    const gracefulShutdown = async (reason: string) => {
+      if (isShuttingDown) return;
+      isShuttingDown = true;
+      
+      logger.info(`${reason}, shutting down gracefully...`);
+      
+      // Clean up browser if still open
+      if (browser) {
+        try {
+          await browser.close();
+        } catch (err) {
+          logger.debug('Error closing browser during shutdown:', err);
+        }
+      }
+      
       resolve();
+    };
+
+    // Handle termination signals gracefully
+    process.on('SIGTERM', () => gracefulShutdown('Received SIGTERM'));
+    process.on('SIGINT', () => gracefulShutdown('Received SIGINT (Ctrl+C)'));
+
+    // 🔑 NEW: Monitor browser disconnection events
+    browser.on('disconnected', () => {
+      logger.info('🔍 Browser process disconnected (browser closed or crashed)');
+      gracefulShutdown('Browser disconnected');
     });
+
+    // 🔑 NEW: Monitor page close events  
+    page.on('close', () => {
+      logger.info('🗑️  Browser tab closed by user');
+      gracefulShutdown('Browser tab closed');
+    });
+
+    // 🔑 NEW: Monitor for page errors that might indicate tab issues
+    page.on('error', (error) => {
+      logger.info('❌ Page error detected:', error.message);
+      gracefulShutdown('Page error detected');
+    });
+
+    // 🔑 NEW: Monitor for page crashes
+    page.on('pageerror', (error) => {
+      logger.info('💥 Page crash detected:', error.message);
+      gracefulShutdown('Page crashed');
+    });
+
+    // 🔑 NEW: Monitor for browser process termination
+    const checkBrowserAlive = setInterval(async () => {
+      try {
+        // Try to get browser version - this will fail if browser is closed
+        await browser.version();
+        
+        // Try to get page title - this will fail if page is closed
+        await page.title();
+      } catch (error) {
+        logger.info('🔍 Browser health check failed (likely closed)');
+        gracefulShutdown('Browser health check failed');
+      }
+    }, 10000); // Check every 10 seconds
 
     // Log keep-alive status every 5 minutes
     const keepAliveInterval = setInterval(() => {
-      logger.debug('Browser automation process still alive, keeping browser session open...');
+      if (!isShuttingDown) {
+        logger.debug('Browser automation process still alive, keeping browser session open...');
+      }
     }, 5 * 60 * 1000); // 5 minutes
 
-    // Clean up interval when process ends
-    process.on('exit', () => {
+    // Clean up intervals when process ends
+    const cleanup = () => {
       clearInterval(keepAliveInterval);
-    });
+      clearInterval(checkBrowserAlive);
+    };
+    
+    process.on('exit', cleanup);
+    
+    // Cleanup when promise resolves
+    setTimeout(() => {
+      if (isShuttingDown) {
+        cleanup();
+      }
+    }, 1000);
   });
 }
 
