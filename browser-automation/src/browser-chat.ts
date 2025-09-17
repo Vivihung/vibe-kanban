@@ -56,42 +56,154 @@ const agents: Record<string, AgentConfig> = {
   }
 };
 
+async function waitForLogin(page: Page, agent: AgentConfig): Promise<void> {
+  const maxWaitTime = 5 * 60 * 1000; // 5 minutes maximum wait
+  const pollInterval = 2000; // Check every 2 seconds
+  const startTime = Date.now();
+  
+  logger.info('Polling for login completion...');
+  
+  while (Date.now() - startTime < maxWaitTime) {
+    try {
+      // Check if login completed by looking for disappearance of login elements
+      // and appearance of chat interface
+      const isNowLoggedIn = await checkIfLoggedIn(page, agent);
+      
+      if (isNowLoggedIn) {
+        logger.info('Login detected successfully!');
+        return; // Login completed
+      }
+      
+      // Log progress periodically
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+      if (elapsed % 30 === 0 && elapsed > 0) { // Every 30 seconds
+        logger.info(`⏳ Still waiting for login... (${elapsed}s elapsed, ${Math.round(maxWaitTime/1000 - elapsed)}s remaining)`);
+      }
+      
+      // Wait before next check
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+      
+    } catch (error) {
+      logger.debug('Error during login polling:', error);
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+    }
+  }
+  
+  // Timeout reached
+  throw new Error('Login timeout: User did not complete login within 5 minutes');
+}
+
 async function checkIfLoggedIn(page: Page, agent: AgentConfig): Promise<boolean> {
   try {
-    // Check for login indicators (sign that user is NOT logged in)
+    // First, check for login indicators (sign that user is NOT logged in)
     const loginIndicators = [
       'button:contains("Log in")',
-      'button:contains("Sign in")',
+      'button:contains("Sign in")', 
+      'button:contains("Login")',
+      'button:contains("Sign In")',
       'input[type="email"]',
+      'input[type="password"]',
       '[data-testid="login-form"]',
       '.login-form',
       'a[href*="login"]',
-      'a[href*="signin"]'
+      'a[href*="signin"]',
+      '[data-testid="login-button"]',
+      '.auth-form',
+      '[class*="login"]',
+      '[class*="signin"]'
     ];
 
-    for (const selector of loginIndicators) {
+    // Use Promise.race to check multiple login indicators simultaneously
+    const loginCheckPromises = loginIndicators.map(async (selector) => {
       try {
-        await page.waitForSelector(selector, { timeout: 2000 });
-        logger.info(`Found login indicator: ${selector}`);
-        return false; // Login form found, not logged in
+        const element = await page.waitForSelector(selector, { timeout: 1000 });
+        if (element) {
+          const isVisible = await element.isVisible();
+          if (isVisible) {
+            logger.debug(`Found login indicator: ${selector}`);
+            return false; // Login form found, not logged in
+          }
+        }
       } catch (e) {
-        continue;
+        // Selector not found, continue
       }
+      return null;
+    });
+
+    const loginResults = await Promise.allSettled(loginCheckPromises);
+    const foundLoginIndicator = loginResults.some(result => 
+      result.status === 'fulfilled' && result.value === false
+    );
+
+    if (foundLoginIndicator) {
+      return false; // Definitely not logged in
     }
 
     // Check for chat interface (sign that user IS logged in)
-    for (const selector of agent.inputSelectors) {
+    const chatCheckPromises = agent.inputSelectors.map(async (selector) => {
       try {
-        await page.waitForSelector(selector, { timeout: 5000 });
-        logger.info(`Found chat input: ${selector}`);
-        return true; // Chat interface found, logged in
+        const element = await page.waitForSelector(selector, { timeout: 3000 });
+        if (element) {
+          const isVisible = await element.isVisible();
+          if (isVisible) {
+            logger.debug(`Found chat input: ${selector}`);
+            return true; // Chat interface found, logged in
+          }
+        }
+      } catch (e) {
+        // Selector not found, continue
+      }
+      return null;
+    });
+
+    const chatResults = await Promise.allSettled(chatCheckPromises);
+    const foundChatInterface = chatResults.some(result => 
+      result.status === 'fulfilled' && result.value === true
+    );
+
+    if (foundChatInterface) {
+      return true; // Definitely logged in
+    }
+
+    // Additional check: look for common post-login elements
+    const postLoginIndicators = [
+      '[data-testid="user-menu"]',
+      '[data-testid="profile-button"]', 
+      'button[aria-label*="Profile"]',
+      '.user-avatar',
+      '[class*="avatar"]',
+      'button:contains("New chat")',
+      '[data-testid="new-chat"]'
+    ];
+
+    for (const selector of postLoginIndicators) {
+      try {
+        const element = await page.$(selector);
+        if (element && await element.isVisible()) {
+          logger.debug(`Found post-login indicator: ${selector}`);
+          return true;
+        }
       } catch (e) {
         continue;
       }
     }
 
-    // If no clear indicators, assume not logged in for safety
+    // If no clear indicators either way, check the current URL for clues
+    const currentUrl = page.url();
+    if (currentUrl.includes('/login') || currentUrl.includes('/signin') || currentUrl.includes('/auth')) {
+      logger.debug('URL indicates login page');
+      return false;
+    }
+
+    if (currentUrl.includes('/chat') || currentUrl.includes('/conversation')) {
+      logger.debug('URL indicates chat page, likely logged in');
+      return true;
+    }
+
+    // If still unclear, assume not logged in for safety
+    logger.debug('Login status unclear, assuming not logged in for safety');
     return false;
+    
   } catch (error) {
     logger.debug('Error checking login status:', error);
     return false;
@@ -149,13 +261,13 @@ async function sendMessageToAgent(agentName: string, message: string): Promise<v
     const isLoggedIn = await checkIfLoggedIn(page, agent);
     
     if (!isLoggedIn) {
-      // Manual login prompt
-      logger.info('Please login manually in the browser window.');
-      logger.info('Press Enter in this terminal when ready to continue...');
+      // Automatic login detection - wait for user to complete login in browser
+      logger.info('🔐 Login required: Please complete authentication in the browser window.');
+      logger.info('⏳ Waiting for login to complete automatically...');
+      logger.info('   (No manual input needed - login will be detected automatically)');
       
-      await new Promise((resolve) => {
-        process.stdin.once('data', resolve);
-      });
+      await waitForLogin(page, agent);
+      logger.info('✅ Login detected! Continuing with automation...');
     } else {
       logger.info('Already logged in, continuing with automation...');
     }
@@ -536,13 +648,13 @@ async function sendInitialMessage(agent: AgentConfig, message: string): Promise<
     const isLoggedIn = await checkIfLoggedIn(page, agent);
     
     if (!isLoggedIn) {
-      // Manual login prompt
-      logger.info('Please login manually in the browser window.');
-      logger.info('Press Enter in this terminal when ready to continue...');
+      // Automatic login detection - wait for user to complete login in browser
+      logger.info('🔐 Login required: Please complete authentication in the browser window.');
+      logger.info('⏳ Waiting for login to complete automatically...');
+      logger.info('   (No manual input needed - login will be detected automatically)');
       
-      await new Promise((resolve) => {
-        process.stdin.once('data', resolve);
-      });
+      await waitForLogin(page, agent);
+      logger.info('✅ Login detected! Continuing with automation...');
     }
 
     // Find message input
