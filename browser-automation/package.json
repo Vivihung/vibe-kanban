@@ -7,7 +7,10 @@
         "build": "tsc",
         "dev": "ts-node src/browser-chat.ts",
         "start": "node dist/browser-chat.js",
-        "test": "node test-response.js"
+        "test": "jest",
+        "test:watch": "jest --watch",
+        "test:coverage": "jest --coverage",
+        "test-server": "node test/test-server.js"
     },
     "keywords": [
         "browser-automation",
@@ -24,8 +27,15 @@
         "puppeteer-extra-plugin-stealth": "^2.11.2"
     },
     "devDependencies": {
+        "@types/express": "^4.17.21",
+        "@types/jest": "^29.5.12",
         "@types/node": "^24.3.2",
-        "typescript": "^5.9.2",
-        "ts-node": "^10.9.2"
+        "@types/node-fetch": "^2.6.13",
+        "express": "^4.19.2",
+        "jest": "^29.7.0",
+        "node-fetch": "^2.7.0",
+        "ts-jest": "^29.1.2",
+        "ts-node": "^10.9.2",
+        "typescript": "^5.9.2"
     }
 }

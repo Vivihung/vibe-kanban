@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Microsoft 365 Sign In</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f5f5f5;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .login-container {
+            background: white;
+            padding: 48px 44px 36px 44px;
+            border-radius: 2px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+            width: 100%;
+            max-width: 440px;
+        }
+        .logo {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+        .logo-img {
+            width: 108px;
+            height: 24px;
+            background: #0078d4;
+            color: white;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            border-radius: 2px;
+        }
+        h1 {
+            font-size: 24px;
+            font-weight: 600;
+            color: #1b1a19;
+            margin-bottom: 8px;
+            text-align: left;
+        }
+        .subtitle {
+            color: #605e5c;
+            font-size: 15px;
+            margin-bottom: 24px;
+        }
+        .form-group {
+            margin-bottom: 16px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 15px;
+            color: #1b1a19;
+        }
+        input[type="email"],
+        input[type="password"] {
+            width: 100%;
+            padding: 11px 12px;
+            border: 1px solid #605e5c;
+            border-radius: 2px;
+            font-size: 15px;
+            font-family: inherit;
+            box-sizing: border-box;
+        }
+        input[type="email"]:focus,
+        input[type="password"]:focus {
+            outline: none;
+            border-color: #0078d4;
+            border-width: 2px;
+            padding: 10px 11px;
+        }
+        .signin-button {
+            background: #0078d4;
+            color: white;
+            border: none;
+            padding: 13px 32px;
+            border-radius: 2px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            margin-top: 24px;
+        }
+        .signin-button:hover {
+            background: #106ebe;
+        }
+        .signin-button:disabled {
+            background: #a19f9d;
+            cursor: not-allowed;
+        }
+        .auth-form {
+            /* Marker class for login detection */
+        }
+        .demo-info {
+            background: #fff4ce;
+            border: 1px solid #fed100;
+            padding: 16px;
+            border-radius: 2px;
+            margin-bottom: 24px;
+        }
+        .demo-info h3 {
+            margin: 0 0 8px 0;
+            color: #8a6f00;
+            font-size: 15px;
+            font-weight: 600;
+        }
+        .demo-info p {
+            margin: 4px 0;
+            font-size: 13px;
+            color: #8a6f00;
+        }
+        .error-message {
+            color: #d13438;
+            font-size: 13px;
+            margin-top: 8px;
+            display: none;
+        }
+        .checkbox-container {
+            display: flex;
+            align-items: center;
+            margin: 16px 0;
+        }
+        .checkbox-container input[type="checkbox"] {
+            margin-right: 8px;
+        }
+        .checkbox-container label {
+            margin-bottom: 0;
+            font-size: 13px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <div class="logo">
+            <div class="logo-img">Microsoft</div>
+        </div>
+        
+        <h1>Sign in</h1>
+        <p class="subtitle">to continue to Microsoft 365 Copilot</p>
+        
+        <div class="demo-info">
+            <h3>🧪 Test Environment</h3>
+            <p>This is a simulation for testing browser automation.</p>
+            <p>Click "Sign in" to simulate M365 authentication flow.</p>
+            <p>Redirect occurs after 2 seconds to mimic real behavior.</p>
+        </div>
+        
+        <form class="auth-form" data-testid="login-form" id="loginForm">
+            <div class="form-group">
+                <label for="email">Email, phone, or Skype</label>
+                <input 
+                    type="email" 
+                    id="email" 
+                    name="email" 
+                    required 
+                    value="test@contoso.com"
+                    placeholder="someone@example.com"
+                />
+                <div class="error-message" id="emailError">Enter a valid email address</div>
+            </div>
+            
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input 
+                    type="password" 
+                    id="password" 
+                    name="password" 
+                    required 
+                    value="testpassword"
+                    placeholder="Password"
+                />
+                <div class="error-message" id="passwordError">Password is required</div>
+            </div>
+            
+            <div class="checkbox-container">
+                <input type="checkbox" id="keepSignedIn" name="keepSignedIn" checked>
+                <label for="keepSignedIn">Keep me signed in</label>
+            </div>
+            
+            <button 
+                type="submit" 
+                class="signin-button"
+                data-testid="login-button"
+            >
+                Sign in
+            </button>
+        </form>
+        
+        <div style="text-align: center; margin-top: 24px;">
+            <a href="#" style="color: #0078d4; text-decoration: none; font-size: 13px;">
+                Can't access your account?
+            </a>
+        </div>
+        
+        <div style="text-align: center; margin-top: 16px;">
+            <a href="#" style="color: #0078d4; text-decoration: none; font-size: 13px;">
+                Sign-in options
+            </a>
+        </div>
+    </div>
+
+    <script>
+        const loginForm = document.getElementById('loginForm');
+        const signinButton = loginForm.querySelector('.signin-button');
+        const emailInput = document.getElementById('email');
+        const passwordInput = document.getElementById('password');
+        
+        loginForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            // Simple validation
+            let hasErrors = false;
+            
+            if (!emailInput.value.trim()) {
+                document.getElementById('emailError').style.display = 'block';
+                hasErrors = true;
+            } else {
+                document.getElementById('emailError').style.display = 'none';
+            }
+            
+            if (!passwordInput.value.trim()) {
+                document.getElementById('passwordError').style.display = 'block';
+                hasErrors = true;
+            } else {
+                document.getElementById('passwordError').style.display = 'none';
+            }
+            
+            if (hasErrors) return;
+            
+            signinButton.disabled = true;
+            signinButton.textContent = 'Signing in...';
+            
+            // Simulate M365 authentication process (typically slower)
+            setTimeout(() => {
+                // Redirect to M365 Copilot chat interface
+                window.location.href = '/m365-chat';
+            }, 2000);
+        });
+        
+        // Clear errors on input
+        emailInput.addEventListener('input', () => {
+            document.getElementById('emailError').style.display = 'none';
+        });
+        
+        passwordInput.addEventListener('input', () => {
+            document.getElementById('passwordError').style.display = 'none';
+        });
+        
+        // Auto-fill demo credentials
+        window.addEventListener('load', () => {
+            emailInput.value = 'test@contoso.com';
+            passwordInput.value = 'testpassword';
+        });
+    </script>
+</body>
+</html>

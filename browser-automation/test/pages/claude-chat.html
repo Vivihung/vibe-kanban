@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Chat - Test Simulation</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .chat-container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            border-bottom: 1px solid #eee;
+            padding-bottom: 15px;
+            margin-bottom: 20px;
+        }
+        .user-menu {
+            float: right;
+            background: #007bff;
+            color: white;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .chat-messages {
+            min-height: 400px;
+            margin-bottom: 20px;
+            padding: 10px;
+            border: 1px solid #eee;
+            border-radius: 4px;
+        }
+        .message {
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 8px;
+        }
+        .message.assistant {
+            background: #f8f9fa;
+            border-left: 4px solid #007bff;
+        }
+        .message.user {
+            background: #e3f2fd;
+            margin-left: 50px;
+        }
+        .input-container {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+        }
+        .message-input {
+            flex: 1;
+            min-height: 40px;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            resize: none;
+            font-family: inherit;
+        }
+        .message-input:focus {
+            outline: none;
+            border-color: #007bff;
+        }
+        .send-button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        .send-button:hover {
+            background: #0056b3;
+        }
+        .send-button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .copy-button {
+            background: #6c757d;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            margin-top: 5px;
+        }
+        .typing-indicator {
+            color: #666;
+            font-style: italic;
+            display: none;
+        }
+        .typing-indicator.visible {
+            display: block;
+        }
+        .new-chat-button {
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="header">
+            <h1>Claude Chat - Test Simulation</h1>
+            <div class="user-menu" data-testid="user-menu" title="User Profile">U</div>
+            <button class="new-chat-button" data-testid="new-chat">New Chat</button>
+        </div>
+        
+        <div class="chat-messages" id="chatMessages">
+            <div class="message assistant">
+                <div data-testid="message-content">
+                    Hello! I'm Claude, your AI assistant. This is a test simulation. How can I help you today?
+                    <button class="copy-button" aria-label="Copy">Copy</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="typing-indicator" id="typingIndicator">
+            Claude is typing...
+        </div>
+        
+        <div class="input-container">
+            <textarea 
+                class="message-input" 
+                id="messageInput"
+                contenteditable="true"
+                placeholder="Message Claude..."
+                data-testid="chat-input"
+                rows="1"
+            ></textarea>
+            <button 
+                class="send-button" 
+                id="sendButton"
+                type="submit"
+                aria-label="Send message"
+                data-testid="send-button"
+            >
+                Send
+            </button>
+        </div>
+    </div>
+
+    <script>
+        let messageCount = 1;
+        
+        const messageInput = document.getElementById('messageInput');
+        const sendButton = document.getElementById('sendButton');
+        const chatMessages = document.getElementById('chatMessages');
+        const typingIndicator = document.getElementById('typingIndicator');
+        
+        // Auto-resize textarea
+        messageInput.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = this.scrollHeight + 'px';
+        });
+        
+        // Send message on Enter (but not Shift+Enter)
+        messageInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+        
+        // Send button click
+        sendButton.addEventListener('click', sendMessage);
+        
+        function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message) return;
+            
+            // Add user message
+            addMessage(message, 'user');
+            
+            // Clear input
+            messageInput.value = '';
+            messageInput.style.height = 'auto';
+            
+            // Show typing indicator
+            typingIndicator.classList.add('visible');
+            sendButton.disabled = true;
+            
+            // Simulate response delay
+            setTimeout(() => {
+                // Hide typing indicator
+                typingIndicator.classList.remove('visible');
+                sendButton.disabled = false;
+                
+                // Add assistant response
+                const response = `Test response #${messageCount} to your message: "${message}". This is a simulation for testing browser automation behavior.`;
+                addMessage(response, 'assistant', true);
+                messageCount++;
+            }, 2000 + Math.random() * 1000); // Random delay 2-3 seconds
+        }
+        
+        function addMessage(text, sender, withCopyButton = false) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}`;
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.setAttribute('data-testid', 'message-content');
+            contentDiv.textContent = text;
+            
+            if (withCopyButton) {
+                const copyButton = document.createElement('button');
+                copyButton.className = 'copy-button';
+                copyButton.setAttribute('aria-label', 'Copy');
+                copyButton.textContent = 'Copy';
+                copyButton.onclick = () => {
+                    navigator.clipboard.writeText(text);
+                };
+                contentDiv.appendChild(copyButton);
+            }
+            
+            messageDiv.appendChild(contentDiv);
+            chatMessages.appendChild(messageDiv);
+            
+            // Scroll to bottom
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        
+        // Simulate login detection
+        window.addEventListener('load', () => {
+            // Add profile button after a short delay to simulate loading
+            setTimeout(() => {
+                const profileButton = document.createElement('button');
+                profileButton.setAttribute('data-testid', 'profile-button');
+                profileButton.setAttribute('aria-label', 'Profile');
+                profileButton.textContent = 'Profile';
+                profileButton.style.display = 'none'; // Hidden but present for testing
+                document.body.appendChild(profileButton);
+            }, 1000);
+        });
+    </script>
+</body>
+</html>

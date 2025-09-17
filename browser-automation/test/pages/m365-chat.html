@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>M365 Copilot - Test Simulation</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #f3f2f1;
+            min-height: 100vh;
+        }
+        .header {
+            background: #0078d4;
+            color: white;
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .logo {
+            font-size: 18px;
+            font-weight: 600;
+        }
+        .user-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: #106ebe;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+        }
+        .main-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .chat-interface {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .chat-header {
+            background: #f8f8f8;
+            padding: 15px 20px;
+            border-bottom: 1px solid #e1dfdd;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .chat-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #323130;
+        }
+        .chat-messages {
+            height: 500px;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        .message {
+            margin-bottom: 20px;
+        }
+        .message.assistant {
+            background: #f3f2f1;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #0078d4;
+        }
+        .message.user {
+            background: #e1f5fe;
+            padding: 15px;
+            border-radius: 8px;
+            margin-left: 100px;
+        }
+        .message-content {
+            line-height: 1.5;
+        }
+        .input-section {
+            border-top: 1px solid #e1dfdd;
+            padding: 20px;
+        }
+        .input-container {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+        }
+        .message-textarea {
+            flex: 1;
+            min-height: 44px;
+            max-height: 120px;
+            padding: 12px 16px;
+            border: 2px solid #e1dfdd;
+            border-radius: 6px;
+            resize: none;
+            font-family: inherit;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+        .message-textarea:focus {
+            outline: none;
+            border-color: #0078d4;
+        }
+        .send-button {
+            background: #0078d4;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            min-width: 80px;
+        }
+        .send-button:hover {
+            background: #106ebe;
+        }
+        .send-button:disabled {
+            background: #a19f9d;
+            cursor: not-allowed;
+        }
+        .typing-indicator {
+            padding: 10px 20px;
+            color: #605e5c;
+            font-style: italic;
+            display: none;
+        }
+        .typing-indicator.visible {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo">Microsoft 365 Copilot</div>
+        <div class="user-avatar" data-testid="user-menu">T</div>
+    </div>
+    
+    <div class="main-container">
+        <div class="chat-interface">
+            <div class="chat-header">
+                <div class="chat-title">Chat with Copilot</div>
+                <button class="send-button" style="padding: 6px 12px; font-size: 12px;" data-testid="new-chat">
+                    New Chat
+                </button>
+            </div>
+            
+            <div class="chat-messages" id="chatMessages">
+                <div class="message assistant">
+                    <div class="message-content" data-testid="message-content">
+                        Hello! I'm Microsoft 365 Copilot. This is a test simulation. I can help you with productivity tasks, answer questions, and assist with Microsoft 365 applications. What would you like to know?
+                    </div>
+                </div>
+            </div>
+            
+            <div class="typing-indicator" id="typingIndicator">
+                Copilot is thinking...
+            </div>
+            
+            <div class="input-section">
+                <div class="input-container">
+                    <textarea 
+                        class="message-textarea" 
+                        id="messageInput"
+                        placeholder="Ask me anything about Microsoft 365..."
+                        data-testid="chat-input"
+                        rows="1"
+                    ></textarea>
+                    <button 
+                        class="send-button" 
+                        id="sendButton"
+                        type="submit"
+                        aria-label="Send message"
+                        data-testid="send-button"
+                    >
+                        Send
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let messageCount = 1;
+        
+        const messageInput = document.getElementById('messageInput');
+        const sendButton = document.getElementById('sendButton');
+        const chatMessages = document.getElementById('chatMessages');
+        const typingIndicator = document.getElementById('typingIndicator');
+        
+        // Auto-resize textarea
+        messageInput.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+        });
+        
+        // Send message on Enter (but not Shift+Enter)
+        messageInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+        
+        // Send button click
+        sendButton.addEventListener('click', sendMessage);
+        
+        function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message) return;
+            
+            // Add user message
+            addMessage(message, 'user');
+            
+            // Clear input
+            messageInput.value = '';
+            messageInput.style.height = 'auto';
+            
+            // Show typing indicator
+            typingIndicator.classList.add('visible');
+            sendButton.disabled = true;
+            
+            // Simulate response delay (M365 is often slower)
+            setTimeout(() => {
+                // Hide typing indicator
+                typingIndicator.classList.remove('visible');
+                sendButton.disabled = false;
+                
+                // Add assistant response
+                const responses = [
+                    `Based on your query "${message}", here's what I found in your Microsoft 365 environment. This is test response #${messageCount}.`,
+                    `I can help you with "${message}". In Microsoft 365, you might want to check your SharePoint sites, Teams channels, or Outlook calendar for related information.`,
+                    `Regarding "${message}", I've analyzed your productivity patterns and suggest the following approach. This is a simulated M365 Copilot response #${messageCount}.`
+                ];
+                
+                const response = responses[Math.floor(Math.random() * responses.length)];
+                addMessage(response, 'assistant');
+                messageCount++;
+            }, 2500 + Math.random() * 1500); // Random delay 2.5-4 seconds (slower than Claude)
+        }
+        
+        function addMessage(text, sender) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}`;
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.setAttribute('data-testid', 'message-content');
+            contentDiv.textContent = text;
+            
+            messageDiv.appendChild(contentDiv);
+            chatMessages.appendChild(messageDiv);
+            
+            // Scroll to bottom
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+        
+        // Simulate authentication indicators
+        window.addEventListener('load', () => {
+            // Add profile button after a short delay
+            setTimeout(() => {
+                const profileButton = document.createElement('button');
+                profileButton.setAttribute('data-testid', 'profile-button');
+                profileButton.setAttribute('aria-label', 'Profile');
+                profileButton.textContent = 'Profile';
+                profileButton.style.display = 'none'; // Hidden but present for testing
+                document.body.appendChild(profileButton);
+            }, 1000);
+        });
+    </script>
+</body>
+</html>

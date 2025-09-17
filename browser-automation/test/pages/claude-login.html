@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Login - Test Simulation</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .login-container {
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            width: 100%;
+            max-width: 400px;
+        }
+        .login-form {
+            display: flex;
+            flex-direction: column;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #333;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #555;
+        }
+        input[type="email"],
+        input[type="password"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 16px;
+            transition: border-color 0.2s;
+        }
+        input[type="email"]:focus,
+        input[type="password"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .login-button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .login-button:hover {
+            background: #5a67d8;
+        }
+        .login-button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .auth-form {
+            /* Marker class for login detection */
+        }
+        .demo-info {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            border-left: 4px solid #007bff;
+        }
+        .demo-info h3 {
+            margin: 0 0 10px 0;
+            color: #007bff;
+        }
+        .demo-info p {
+            margin: 5px 0;
+            font-size: 14px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <h1>Sign in to Claude</h1>
+        
+        <div class="demo-info">
+            <h3>🧪 Test Mode</h3>
+            <p>This is a simulation for testing browser automation.</p>
+            <p>Click "Login" to simulate successful authentication.</p>
+            <p>The page will redirect to the chat interface after 2 seconds.</p>
+        </div>
+        
+        <form class="login-form auth-form" data-testid="login-form" id="loginForm">
+            <div class="form-group">
+                <label for="email">Email</label>
+                <input 
+                    type="email" 
+                    id="email" 
+                    name="email" 
+                    required 
+                    value="test@example.com"
+                    placeholder="Enter your email"
+                />
+            </div>
+            
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input 
+                    type="password" 
+                    id="password" 
+                    name="password" 
+                    required 
+                    value="testpassword"
+                    placeholder="Enter your password"
+                />
+            </div>
+            
+            <button 
+                type="submit" 
+                class="login-button"
+                data-testid="login-button"
+            >
+                Sign In
+            </button>
+        </form>
+        
+        <div style="text-align: center; margin-top: 20px;">
+            <a href="#" style="color: #667eea; text-decoration: none;">Forgot password?</a>
+        </div>
+    </div>
+
+    <script>
+        const loginForm = document.getElementById('loginForm');
+        const loginButton = loginForm.querySelector('.login-button');
+        
+        loginForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            loginButton.disabled = true;
+            loginButton.textContent = 'Signing in...';
+            
+            // Simulate login process
+            setTimeout(() => {
+                // Redirect to chat interface
+                window.location.href = '/claude-chat';
+            }, 2000);
+        });
+        
+        // Auto-fill demo credentials for easier testing
+        window.addEventListener('load', () => {
+            document.getElementById('email').value = 'test@example.com';
+            document.getElementById('password').value = 'testpassword';
+        });
+    </script>
+</body>
+</html>
