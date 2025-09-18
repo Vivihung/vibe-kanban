@@ -27,6 +27,7 @@ interface Task {
   title: string;
   description: string | null;
   status: TaskStatus;
+  repo_path?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -41,17 +42,20 @@ interface TaskFormDialogProps {
   onCreateTask?: (
     title: string,
     description: string,
+    repoPath?: string,
     imageIds?: string[]
   ) => Promise<void>;
   onCreateAndStartTask?: (
     title: string,
     description: string,
+    repoPath?: string,
     imageIds?: string[]
   ) => Promise<void>;
   onUpdateTask?: (
     title: string,
     description: string,
     status: TaskStatus,
+    repoPath?: string,
     imageIds?: string[]
   ) => Promise<void>;
 }
@@ -70,6 +74,7 @@ export function TaskFormDialog({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [status, setStatus] = useState<TaskStatus>('todo');
+  const [repoPath, setRepoPath] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmittingAndStart, setIsSubmittingAndStart] = useState(false);
   const [templates, setTemplates] = useState<TaskTemplate[]>([]);
@@ -86,17 +91,18 @@ export function TaskFormDialog({
   const hasUnsavedChanges = useCallback(() => {
     if (!isEditMode) {
       // Create mode - warn when there's content
-      return title.trim() !== '' || description.trim() !== '';
+      return title.trim() !== '' || description.trim() !== '' || repoPath.trim() !== '';
     } else if (task) {
       // Edit mode - warn when current values differ from original task
       const titleChanged = title.trim() !== task.title.trim();
       const descriptionChanged =
         (description || '').trim() !== (task.description || '').trim();
       const statusChanged = status !== task.status;
-      return titleChanged || descriptionChanged || statusChanged;
+      const repoPathChanged = repoPath.trim() !== (task.repo_path || '').trim();
+      return titleChanged || descriptionChanged || statusChanged || repoPathChanged;
     }
     return false;
-  }, [title, description, status, isEditMode, task]);
+  }, [title, description, repoPath, status, isEditMode, task]);
 
   // Warn on browser/tab close if there are unsaved changes
   useEffect(() => {
@@ -123,6 +129,7 @@ export function TaskFormDialog({
       setTitle(task.title);
       setDescription(task.description || '');
       setStatus(task.status);
+      setRepoPath(task.repo_path || '');
 
       // Load existing images for the task
       if (isOpen) {
@@ -139,6 +146,7 @@ export function TaskFormDialog({
       setTitle(initialTask.title);
       setDescription(initialTask.description || '');
       setStatus('todo'); // Always start duplicated tasks as 'todo'
+      setRepoPath(initialTask.repo_path || '');
       setSelectedTemplate('');
       setImages([]);
       setNewlyUploadedImageIds([]);
@@ -147,12 +155,14 @@ export function TaskFormDialog({
       setTitle(initialTemplate.title);
       setDescription(initialTemplate.description || '');
       setStatus('todo');
+      setRepoPath('');
       setSelectedTemplate('');
     } else {
       // Create mode - reset to defaults
       setTitle('');
       setDescription('');
       setStatus('todo');
+      setRepoPath('');
       setSelectedTemplate('');
       setImages([]);
       setNewlyUploadedImageIds([]);
@@ -232,9 +242,9 @@ export function TaskFormDialog({
       }
 
       if (isEditMode && onUpdateTask) {
-        await onUpdateTask(title, description, status, imageIds);
+        await onUpdateTask(title, description, status, repoPath || undefined, imageIds);
       } else if (!isEditMode && onCreateTask) {
-        await onCreateTask(title, description, imageIds);
+        await onCreateTask(title, description, repoPath || undefined, imageIds);
       }
 
       // Reset form on successful creation
@@ -242,6 +252,7 @@ export function TaskFormDialog({
         setTitle('');
         setDescription('');
         setStatus('todo');
+        setRepoPath('');
         setImages([]);
         setNewlyUploadedImageIds([]);
       }
@@ -253,6 +264,7 @@ export function TaskFormDialog({
   }, [
     title,
     description,
+    repoPath,
     status,
     isEditMode,
     onCreateTask,
@@ -270,13 +282,14 @@ export function TaskFormDialog({
       if (!isEditMode && onCreateAndStartTask) {
         const imageIds =
           newlyUploadedImageIds.length > 0 ? newlyUploadedImageIds : undefined;
-        await onCreateAndStartTask(title, description, imageIds);
+        await onCreateAndStartTask(title, description, repoPath || undefined, imageIds);
       }
 
       // Reset form on successful creation
       setTitle('');
       setDescription('');
       setStatus('todo');
+      setRepoPath('');
       setImages([]);
       setNewlyUploadedImageIds([]);
 
@@ -287,6 +300,7 @@ export function TaskFormDialog({
   }, [
     title,
     description,
+    repoPath,
     isEditMode,
     onCreateAndStartTask,
     onOpenChange,
@@ -407,6 +421,23 @@ export function TaskFormDialog({
                 disabled={isSubmitting || isSubmittingAndStart}
                 projectId={projectId}
               />
+            </div>
+
+            <div>
+              <Label htmlFor="repo-path" className="text-sm font-medium">
+                Repository Path (Optional)
+              </Label>
+              <Input
+                id="repo-path"
+                value={repoPath}
+                onChange={(e) => setRepoPath(e.target.value)}
+                placeholder="/absolute/path/to/repository"
+                className="mt-1.5"
+                disabled={isSubmitting || isSubmittingAndStart}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Local absolute path to a repository for coding agent tasks running in containers
+              </p>
             </div>
 
             <ImageUploadSection

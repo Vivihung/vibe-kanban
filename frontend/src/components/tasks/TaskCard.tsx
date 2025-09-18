@@ -11,6 +11,7 @@ import {
   CheckCircle,
   Copy,
   Edit,
+  Folder,
   Loader2,
   MoreHorizontal,
   Trash2,
@@ -141,6 +142,12 @@ export function TaskCard({
             ? `${task.description.substring(0, 130)}...`
             : task.description}
         </p>
+      )}
+      {task.repo_path && (
+        <div className="flex items-center gap-1 text-xs text-muted-foreground mt-2">
+          <Folder className="h-3 w-3" />
+          <span className="truncate">{task.repo_path}</span>
+        </div>
       )}
     </KanbanCard>
   );

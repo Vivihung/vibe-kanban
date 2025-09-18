@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use axum::{
     BoxError, Extension, Json, Router,
@@ -29,6 +29,35 @@ use crate::{DeploymentImpl, error::ApiError, middleware::load_task_middleware};
 #[derive(Debug, Deserialize)]
 pub struct TaskQuery {
     pub project_id: Uuid,
+}
+
+/// Validates a repository path for multi-repo container execution
+fn validate_repo_path(repo_path: &str) -> Result<(), ApiError> {
+    let path = Path::new(repo_path);
+
+    // Must be absolute path
+    if !path.is_absolute() {
+        return Err(ApiError::BadRequest(
+            "repo_path must be an absolute path".to_string(),
+        ));
+    }
+
+    // Must exist and be directory
+    if !path.exists() {
+        return Err(ApiError::BadRequest(format!(
+            "repo_path does not exist: {}",
+            repo_path
+        )));
+    }
+
+    if !path.is_dir() {
+        return Err(ApiError::BadRequest(format!(
+            "repo_path must be a directory: {}",
+            repo_path
+        )));
+    }
+
+    Ok(())
 }
 
 pub async fn get_tasks(
@@ -71,6 +100,11 @@ pub async fn create_task(
 ) -> Result<ResponseJson<ApiResponse<Task>>, ApiError> {
     let id = Uuid::new_v4();
 
+    // Validate repo_path if provided
+    if let Some(ref repo_path) = payload.repo_path {
+        validate_repo_path(repo_path)?;
+    }
+
     tracing::debug!(
         "Creating task '{}' in project {}",
         payload.title,
@@ -103,6 +137,12 @@ pub async fn create_task_and_start(
     Json(payload): Json<CreateTask>,
 ) -> Result<ResponseJson<ApiResponse<TaskWithAttemptStatus>>, ApiError> {
     let task_id = Uuid::new_v4();
+
+    // Validate repo_path if provided
+    if let Some(ref repo_path) = payload.repo_path {
+        validate_repo_path(repo_path)?;
+    }
+
     let task = Task::create(&deployment.db().pool, &payload, task_id).await?;
 
     if let Some(image_ids) = &payload.image_ids {
@@ -167,6 +207,7 @@ pub async fn create_task_and_start(
         project_id: task.project_id,
         status: task.status,
         parent_task_attempt: task.parent_task_attempt,
+        repo_path: task.repo_path,
         created_at: task.created_at,
         updated_at: task.updated_at,
         has_in_progress_attempt: true,
@@ -181,6 +222,11 @@ pub async fn update_task(
     State(deployment): State<DeploymentImpl>,
     Json(payload): Json<UpdateTask>,
 ) -> Result<ResponseJson<ApiResponse<Task>>, ApiError> {
+    // Validate repo_path if provided in update
+    if let Some(ref repo_path) = payload.repo_path {
+        validate_repo_path(repo_path)?;
+    }
+
     // Use existing values if not provided in update
     let title = payload.title.unwrap_or(existing_task.title.clone());
     let description = payload.description.or(existing_task.description.clone());
@@ -188,6 +234,7 @@ pub async fn update_task(
     let parent_task_attempt = payload
         .parent_task_attempt
         .or(existing_task.parent_task_attempt);
+    let repo_path = payload.repo_path.or(existing_task.repo_path.clone());
 
     // Check if task status is changing to Done or Cancelled
     let status_changed_to_terminal = existing_task.status != status 
@@ -201,6 +248,7 @@ pub async fn update_task(
         description,
         status.clone(),
         parent_task_attempt,
+        repo_path,
     )
     .await?;
 

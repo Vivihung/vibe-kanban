@@ -25,6 +25,7 @@ pub struct Task {
     pub description: Option<String>,
     pub status: TaskStatus,
     pub parent_task_attempt: Option<Uuid>, // Foreign key to parent TaskAttempt
+    pub repo_path: Option<String>, // Local repository path for container execution
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -37,6 +38,7 @@ pub struct TaskWithAttemptStatus {
     pub description: Option<String>,
     pub status: TaskStatus,
     pub parent_task_attempt: Option<Uuid>,
+    pub repo_path: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub has_in_progress_attempt: bool,
@@ -51,6 +53,7 @@ pub struct CreateTask {
     pub title: String,
     pub description: Option<String>,
     pub parent_task_attempt: Option<Uuid>,
+    pub repo_path: Option<String>,
     pub image_ids: Option<Vec<Uuid>>,
 }
 
@@ -60,6 +63,7 @@ pub struct UpdateTask {
     pub description: Option<String>,
     pub status: Option<TaskStatus>,
     pub parent_task_attempt: Option<Uuid>,
+    pub repo_path: Option<String>,
     pub image_ids: Option<Vec<Uuid>>,
 }
 
@@ -88,6 +92,7 @@ impl Task {
   t.description,
   t.status                        AS "status!: TaskStatus",
   t.parent_task_attempt           AS "parent_task_attempt: Uuid",
+  t.repo_path,
   t.created_at                    AS "created_at!: DateTime<Utc>",
   t.updated_at                    AS "updated_at!: DateTime<Utc>",
 
@@ -138,6 +143,7 @@ ORDER BY t.created_at DESC"#,
                 description: rec.description,
                 status: rec.status,
                 parent_task_attempt: rec.parent_task_attempt,
+                repo_path: rec.repo_path,
                 created_at: rec.created_at,
                 updated_at: rec.updated_at,
                 has_in_progress_attempt: rec.has_in_progress_attempt != 0,
@@ -153,8 +159,8 @@ ORDER BY t.created_at DESC"#,
     pub async fn find_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<Self>, sqlx::Error> {
         sqlx::query_as!(
             Task,
-            r#"SELECT id as "id!: Uuid", project_id as "project_id!: Uuid", title, description, status as "status!: TaskStatus", parent_task_attempt as "parent_task_attempt: Uuid", created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>"
-               FROM tasks 
+            r#"SELECT id as "id!: Uuid", project_id as "project_id!: Uuid", title, description, status as "status!: TaskStatus", parent_task_attempt as "parent_task_attempt: Uuid", repo_path, created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>"
+               FROM tasks
                WHERE id = $1"#,
             id
         )
@@ -165,8 +171,8 @@ ORDER BY t.created_at DESC"#,
     pub async fn find_by_rowid(pool: &SqlitePool, rowid: i64) -> Result<Option<Self>, sqlx::Error> {
         sqlx::query_as!(
             Task,
-            r#"SELECT id as "id!: Uuid", project_id as "project_id!: Uuid", title, description, status as "status!: TaskStatus", parent_task_attempt as "parent_task_attempt: Uuid", created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>"
-               FROM tasks 
+            r#"SELECT id as "id!: Uuid", project_id as "project_id!: Uuid", title, description, status as "status!: TaskStatus", parent_task_attempt as "parent_task_attempt: Uuid", repo_path, created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>"
+               FROM tasks
                WHERE rowid = $1"#,
             rowid
         )
@@ -181,8 +187,8 @@ ORDER BY t.created_at DESC"#,
     ) -> Result<Option<Self>, sqlx::Error> {
         sqlx::query_as!(
             Task,
-            r#"SELECT id as "id!: Uuid", project_id as "project_id!: Uuid", title, description, status as "status!: TaskStatus", parent_task_attempt as "parent_task_attempt: Uuid", created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>"
-               FROM tasks 
+            r#"SELECT id as "id!: Uuid", project_id as "project_id!: Uuid", title, description, status as "status!: TaskStatus", parent_task_attempt as "parent_task_attempt: Uuid", repo_path, created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>"
+               FROM tasks
                WHERE id = $1 AND project_id = $2"#,
             id,
             project_id
@@ -198,15 +204,16 @@ ORDER BY t.created_at DESC"#,
     ) -> Result<Self, sqlx::Error> {
         sqlx::query_as!(
             Task,
-            r#"INSERT INTO tasks (id, project_id, title, description, status, parent_task_attempt) 
-               VALUES ($1, $2, $3, $4, $5, $6) 
-               RETURNING id as "id!: Uuid", project_id as "project_id!: Uuid", title, description, status as "status!: TaskStatus", parent_task_attempt as "parent_task_attempt: Uuid", created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>""#,
+            r#"INSERT INTO tasks (id, project_id, title, description, status, parent_task_attempt, repo_path)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
+               RETURNING id as "id!: Uuid", project_id as "project_id!: Uuid", title, description, status as "status!: TaskStatus", parent_task_attempt as "parent_task_attempt: Uuid", repo_path, created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>""#,
             task_id,
             data.project_id,
             data.title,
             data.description,
             TaskStatus::Todo as TaskStatus,
-            data.parent_task_attempt
+            data.parent_task_attempt,
+            data.repo_path
         )
         .fetch_one(pool)
         .await
@@ -220,19 +227,21 @@ ORDER BY t.created_at DESC"#,
         description: Option<String>,
         status: TaskStatus,
         parent_task_attempt: Option<Uuid>,
+        repo_path: Option<String>,
     ) -> Result<Self, sqlx::Error> {
         sqlx::query_as!(
             Task,
-            r#"UPDATE tasks 
-               SET title = $3, description = $4, status = $5, parent_task_attempt = $6 
-               WHERE id = $1 AND project_id = $2 
-               RETURNING id as "id!: Uuid", project_id as "project_id!: Uuid", title, description, status as "status!: TaskStatus", parent_task_attempt as "parent_task_attempt: Uuid", created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>""#,
+            r#"UPDATE tasks
+               SET title = $3, description = $4, status = $5, parent_task_attempt = $6, repo_path = $7
+               WHERE id = $1 AND project_id = $2
+               RETURNING id as "id!: Uuid", project_id as "project_id!: Uuid", title, description, status as "status!: TaskStatus", parent_task_attempt as "parent_task_attempt: Uuid", repo_path, created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>""#,
             id,
             project_id,
             title,
             description,
             status,
-            parent_task_attempt
+            parent_task_attempt,
+            repo_path
         )
         .fetch_one(pool)
         .await
@@ -282,7 +291,7 @@ ORDER BY t.created_at DESC"#,
         // Find both children and parent for this attempt
         sqlx::query_as!(
             Task,
-            r#"SELECT DISTINCT t.id as "id!: Uuid", t.project_id as "project_id!: Uuid", t.title, t.description, t.status as "status!: TaskStatus", t.parent_task_attempt as "parent_task_attempt: Uuid", t.created_at as "created_at!: DateTime<Utc>", t.updated_at as "updated_at!: DateTime<Utc>"
+            r#"SELECT DISTINCT t.id as "id!: Uuid", t.project_id as "project_id!: Uuid", t.title, t.description, t.status as "status!: TaskStatus", t.parent_task_attempt as "parent_task_attempt: Uuid", t.repo_path, t.created_at as "created_at!: DateTime<Utc>", t.updated_at as "updated_at!: DateTime<Utc>"
                FROM tasks t
                WHERE (
                    -- Find children: tasks that have this attempt as parent
@@ -290,9 +299,9 @@ ORDER BY t.created_at DESC"#,
                ) OR (
                    -- Find parent: task that owns the parent attempt of current task
                    EXISTS (
-                       SELECT 1 FROM tasks current_task 
+                       SELECT 1 FROM tasks current_task
                        JOIN task_attempts parent_attempt ON current_task.parent_task_attempt = parent_attempt.id
-                       WHERE parent_attempt.task_id = t.id 
+                       WHERE parent_attempt.task_id = t.id
                    )
                )
                -- Exclude the current task itself to prevent circular references

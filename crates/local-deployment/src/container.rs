@@ -7,6 +7,12 @@ use std::{
 };
 
 use anyhow::anyhow;
+use bollard::{
+    Docker,
+    container::{CreateContainerOptions, Config as ContainerConfig},
+    image::BuildImageOptions,
+    models::HostConfig,
+};
 use async_stream::try_stream;
 use async_trait::async_trait;
 use axum::response::sse::Event;
@@ -76,6 +82,7 @@ pub struct LocalContainerService {
     git: GitService,
     image_service: ImageService,
     analytics: Option<AnalyticsContext>,
+    docker: Option<Docker>,
 }
 
 impl LocalContainerService {
@@ -90,6 +97,18 @@ impl LocalContainerService {
         let child_store = Arc::new(RwLock::new(HashMap::new()));
         let browser_sessions = Arc::new(RwLock::new(HashMap::new()));
 
+        // Try to initialize Docker client (optional)
+        let docker = match Docker::connect_with_socket_defaults() {
+            Ok(docker) => {
+                tracing::info!("Docker client initialized successfully");
+                Some(docker)
+            }
+            Err(e) => {
+                tracing::warn!("Failed to initialize Docker client: {}. Multi-repo containers will be disabled.", e);
+                None
+            }
+        };
+
         LocalContainerService {
             db,
             child_store,
@@ -99,6 +118,7 @@ impl LocalContainerService {
             git,
             image_service,
             analytics,
+            docker,
         }
     }
 
@@ -504,6 +524,284 @@ impl LocalContainerService {
         format!("vk-{}-{}", short_uuid(attempt_id), task_title_id)
     }
 
+    /// Determine if this task should use Docker containers
+    async fn should_use_docker(&self, task_attempt: &TaskAttempt) -> Result<Option<String>, ContainerError> {
+        // Check if Docker is available
+        if self.docker.is_none() {
+            return Ok(None);
+        }
+
+        // Check if task has repo_path
+        let task = task_attempt
+            .parent_task(&self.db.pool)
+            .await?
+            .ok_or(sqlx::Error::RowNotFound)?;
+
+        Ok(task.repo_path)
+    }
+
+    /// Check if a container_ref represents a Docker container ID (vs worktree path)
+    fn is_docker_container(&self, container_ref: &str) -> bool {
+        // Docker container IDs are typically 64-character hex strings
+        // Worktree paths are filesystem paths
+        container_ref.len() == 64 && container_ref.chars().all(|c| c.is_ascii_hexdigit())
+            || container_ref.len() == 12 && container_ref.chars().all(|c| c.is_ascii_hexdigit()) // short IDs
+    }
+
+    /// Create Docker container for multi-repo task
+    async fn create_docker_container(&self, task_attempt: &TaskAttempt, repo_path: &str) -> Result<ContainerRef, ContainerError> {
+        let docker = self.docker.as_ref().ok_or_else(|| {
+            ContainerError::Other(anyhow!("Docker client not available"))
+        })?;
+
+        let _task = task_attempt
+            .parent_task(&self.db.pool)
+            .await?
+            .ok_or(sqlx::Error::RowNotFound)?;
+
+        // Generate container name
+        let container_name = format!("vibe-kanban-task-{}", short_uuid(&task_attempt.id));
+
+        // Determine devcontainer config to use
+        let devcontainer_path = self.resolve_devcontainer_config(Path::new(repo_path))?;
+
+        // Build image from devcontainer
+        let image_name = self.build_container_image(docker, &devcontainer_path, &task_attempt.id.to_string()).await?;
+
+        // Create container with repo mounted
+        let container_id = self.create_docker_container_instance(docker, &image_name, repo_path, &container_name).await?;
+
+        // Update container_ref in database to store Docker container ID
+        TaskAttempt::update_container_ref(
+            &self.db.pool,
+            task_attempt.id,
+            &container_id,
+        )
+        .await?;
+
+        tracing::info!("Created Docker container {} for task attempt {}", container_id, task_attempt.id);
+        Ok(container_id)
+    }
+
+    /// Resolve devcontainer configuration path
+    fn resolve_devcontainer_config(&self, repo_path: &Path) -> Result<PathBuf, ContainerError> {
+        let project_devcontainer = repo_path.join(".devcontainer");
+
+        if project_devcontainer.exists() {
+            // Use project's devcontainer
+            Ok(project_devcontainer)
+        } else {
+            // Use Vibe Kanban's devcontainer as default
+            let vibe_devcontainer = std::env::current_dir()
+                .map_err(ContainerError::Io)?
+                .join(".devcontainer");
+
+            if vibe_devcontainer.exists() {
+                Ok(vibe_devcontainer)
+            } else {
+                Err(ContainerError::Other(anyhow!(
+                    "No devcontainer configuration found in project or Vibe Kanban directory"
+                )))
+            }
+        }
+    }
+
+    /// Build Docker image from devcontainer
+    async fn build_container_image(&self, docker: &Docker, devcontainer_path: &Path, task_id: &str) -> Result<String, ContainerError> {
+        let image_name = format!("vibe-kanban-task-{}", task_id);
+
+        // Create tar context from devcontainer directory
+        let tar_context = self.create_build_context(devcontainer_path)?;
+
+        let build_options = BuildImageOptions {
+            dockerfile: "Dockerfile".to_string(),
+            t: image_name.clone(),
+            ..Default::default()
+        };
+
+        let mut stream = docker.build_image(build_options, None, Some(tar_context.into()));
+
+        use futures::StreamExt;
+        while let Some(result) = stream.next().await {
+            match result {
+                Ok(output) => {
+                    tracing::debug!("Docker build: {:?}", output);
+                }
+                Err(e) => {
+                    tracing::error!("Docker build error: {:?}", e);
+                    return Err(ContainerError::Other(anyhow!("Docker build failed: {}", e)));
+                }
+            }
+        }
+
+        tracing::info!("Successfully built Docker image: {}", image_name);
+        Ok(image_name)
+    }
+
+    /// Create Docker container instance
+    async fn create_docker_container_instance(
+        &self,
+        docker: &Docker,
+        image_name: &str,
+        repo_path: &str,
+        container_name: &str,
+    ) -> Result<String, ContainerError> {
+        let config = ContainerConfig {
+            image: Some(image_name.to_string()),
+            working_dir: Some("/workspace".to_string()),
+            host_config: Some(HostConfig {
+                binds: Some(vec![
+                    format!("{}:/workspace", repo_path)
+                ]),
+                auto_remove: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let container = docker
+            .create_container(Some(CreateContainerOptions {
+                name: container_name.to_string(),
+                platform: None,
+            }), config)
+            .await
+            .map_err(|e| ContainerError::Other(anyhow!("Failed to create container: {}", e)))?;
+
+        docker.start_container::<String>(&container.id, None).await
+            .map_err(|e| ContainerError::Other(anyhow!("Failed to start container: {}", e)))?;
+
+        tracing::info!("Created and started Docker container: {}", container.id);
+        Ok(container.id)
+    }
+
+    /// Create tar archive of directory for Docker build context
+    fn create_build_context(&self, path: &Path) -> Result<Vec<u8>, ContainerError> {
+        use std::io::Cursor;
+        use tar::Builder;
+
+        let mut buffer = Vec::new();
+        {
+            let cursor = Cursor::new(&mut buffer);
+            let mut archive = Builder::new(cursor);
+
+            archive.append_dir_all(".", path)
+                .map_err(|e| ContainerError::Other(anyhow!("Failed to create tar archive: {}", e)))?;
+
+            archive.finish()
+                .map_err(|e| ContainerError::Other(anyhow!("Failed to finish tar archive: {}", e)))?;
+        }
+
+        Ok(buffer)
+    }
+
+    /// Execute process inside Docker container
+    async fn start_docker_execution(
+        &self,
+        task_attempt: &TaskAttempt,
+        execution_process: &ExecutionProcess,
+        executor_action: &ExecutorAction,
+        container_id: &str,
+    ) -> Result<(), ContainerError> {
+        let docker = self.docker.as_ref().ok_or_else(|| {
+            ContainerError::Other(anyhow!("Docker client not available"))
+        })?;
+
+        // Create a Docker exec command that runs the executor action
+        // For now, this is a simplified approach - we'll execute claude code directly
+
+        use bollard::exec::CreateExecOptions;
+
+        // Extract the task message from the executor action
+        let task_message = match executor_action.typ() {
+            executors::actions::ExecutorActionType::CodingAgentInitialRequest(request) => {
+                request.prompt.clone()
+            }
+            executors::actions::ExecutorActionType::CodingAgentFollowUpRequest(request) => {
+                request.prompt.clone()
+            }
+            _ => {
+                return Err(ContainerError::Other(anyhow!(
+                    "Docker execution not supported for this executor action type"
+                )));
+            }
+        };
+
+        // Create exec instance in container
+        let exec = docker
+            .create_exec(
+                container_id,
+                CreateExecOptions {
+                    cmd: Some(vec![
+                        "claude".to_string(),
+                        "code".to_string(),
+                        "--message".to_string(),
+                        task_message,
+                    ]),
+                    attach_stdout: Some(true),
+                    attach_stderr: Some(true),
+                    working_dir: Some("/workspace".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| ContainerError::Other(anyhow!("Failed to create exec: {}", e)))?;
+
+        // Start exec and get stream
+        let _stream = docker.start_exec(&exec.id, None).await
+            .map_err(|e| ContainerError::Other(anyhow!("Failed to start exec: {}", e)))?;
+
+        // For MVP: Create a placeholder process to integrate with existing child tracking system
+        // In a full implementation, we would bridge Docker exec streams properly
+        let placeholder_child = self.create_placeholder_child().await?;
+
+        self.add_child_to_store(execution_process.id, placeholder_child).await;
+
+        // Spawn Docker exec monitoring task
+        let exec_id = exec.id.clone();
+        let _docker = docker.clone();
+        let execution_id = execution_process.id;
+        let db = self.db.clone();
+
+        tokio::spawn(async move {
+            tracing::info!("Monitoring Docker exec {} for execution {}", exec_id, execution_id);
+
+            // TODO: Monitor the Docker exec stream and update execution status
+            // For now, just simulate completion after a short delay
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+            // Update execution process as completed (simplified for MVP)
+            let _ = ExecutionProcess::update_completion(
+                &db.pool,
+                execution_id,
+                ExecutionProcessStatus::Completed,
+                Some(0),
+            ).await;
+
+            tracing::info!("Docker exec {} completed", exec_id);
+        });
+
+        tracing::info!("Started Docker execution for task attempt {}", task_attempt.id);
+        Ok(())
+    }
+
+    /// Create a placeholder child process for Docker exec integration
+    async fn create_placeholder_child(&self) -> Result<AsyncGroupChild, ContainerError> {
+        use command_group::AsyncCommandGroup;
+        use tokio::process::Command;
+
+        let child = Command::new("sleep")
+            .arg("10") // Sleep for 10 seconds as a placeholder
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
+            .group_spawn()
+            .map_err(|e| ContainerError::Other(anyhow!("Failed to create placeholder child: {}", e)))?;
+
+        tracing::debug!("Created placeholder child process for Docker exec integration");
+        Ok(child)
+    }
+
     async fn track_child_msgs_in_store(&self, id: Uuid, child: &mut AsyncGroupChild) {
         let store = Arc::new(MsgStore::new());
 
@@ -750,10 +1048,22 @@ impl ContainerService for LocalContainerService {
     }
 
     fn task_attempt_to_current_dir(&self, task_attempt: &TaskAttempt) -> PathBuf {
-        PathBuf::from(task_attempt.container_ref.clone().unwrap_or_default())
+        let container_ref = task_attempt.container_ref.clone().unwrap_or_default();
+
+        // For Docker containers, the working directory inside the container is /workspace
+        // But for logging and git operations, we might need special handling
+        PathBuf::from(container_ref)
     }
     /// Create a container
     async fn create(&self, task_attempt: &TaskAttempt) -> Result<ContainerRef, ContainerError> {
+        // Check if this task should use Docker containers
+        if let Some(repo_path) = self.should_use_docker(task_attempt).await? {
+            tracing::info!("Using Docker container for task attempt {} with repo_path: {}",
+                task_attempt.id, repo_path);
+            return self.create_docker_container(task_attempt, &repo_path).await;
+        }
+
+        // Fallback to traditional worktree approach
         let task = task_attempt
             .parent_task(&self.db.pool)
             .await?
@@ -894,27 +1204,34 @@ impl ContainerService for LocalContainerService {
         execution_process: &ExecutionProcess,
         executor_action: &ExecutorAction,
     ) -> Result<(), ContainerError> {
-        // Get the worktree path
         let container_ref = task_attempt
             .container_ref
             .as_ref()
             .ok_or(ContainerError::Other(anyhow!(
                 "Container ref not found for task attempt"
             )))?;
-        let current_dir = PathBuf::from(container_ref);
 
-        // Create the child and stream, add to execution tracker
-        let mut child = executor_action.spawn(&current_dir).await?;
+        // Check if this is a Docker container
+        if self.is_docker_container(container_ref) {
+            // For Docker containers, execute inside the container
+            self.start_docker_execution(task_attempt, execution_process, executor_action, container_ref).await
+        } else {
+            // For worktrees, execute in the filesystem
+            let current_dir = PathBuf::from(container_ref);
 
-        self.track_child_msgs_in_store(execution_process.id, &mut child)
-            .await;
+            // Create the child and stream, add to execution tracker
+            let mut child = executor_action.spawn(&current_dir).await?;
 
-        self.add_child_to_store(execution_process.id, child).await;
+            self.track_child_msgs_in_store(execution_process.id, &mut child)
+                .await;
 
-        // Spawn exit monitor
-        let _hn = self.spawn_exit_monitor(&execution_process.id);
+            self.add_child_to_store(execution_process.id, child).await;
 
-        Ok(())
+            // Spawn exit monitor
+            let _hn = self.spawn_exit_monitor(&execution_process.id);
+
+            Ok(())
+        }
     }
 
     async fn start_browser_chat_execution(

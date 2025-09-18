@@ -48,6 +48,8 @@ pub enum ApiError {
     Io(#[from] std::io::Error),
     #[error("Conflict: {0}")]
     Conflict(String),
+    #[error("Bad request: {0}")]
+    BadRequest(String),
 }
 
 impl From<Git2Error> for ApiError {
@@ -79,6 +81,7 @@ impl IntoResponse for ApiError {
             ApiError::Io(_) => (StatusCode::INTERNAL_SERVER_ERROR, "IoError"),
             ApiError::Multipart(_) => (StatusCode::BAD_REQUEST, "MultipartError"),
             ApiError::Conflict(_) => (StatusCode::CONFLICT, "ConflictError"),
+            ApiError::BadRequest(_) => (StatusCode::BAD_REQUEST, "BadRequestError"),
         };
 
         let error_message = match &self {
@@ -96,6 +99,7 @@ impl IntoResponse for ApiError {
             },
             ApiError::Multipart(_) => "Failed to upload file. Please ensure the file is valid and try again.".to_string(),
             ApiError::Conflict(msg) => msg.clone(),
+            ApiError::BadRequest(msg) => msg.clone(),
             _ => format!("{}: {}", error_type, self),
         };
         let response = ApiResponse::<()>::error(&error_message);

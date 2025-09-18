@@ -39,3 +39,5 @@ async-stream = "0.3"
 json-patch = "2.0"
 tokio = { workspace = true }
 tokio-stream = { version = "0.1.17", features = ["sync"] }
+bollard = "0.17"
+tar = "0.4"

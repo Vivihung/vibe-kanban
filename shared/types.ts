@@ -46,13 +46,13 @@ export type UpdateTaskTemplate = { title: string | null, description: string | n
 
 export type TaskStatus = "todo" | "inprogress" | "inreview" | "done" | "cancelled";
 
-export type Task = { id: string, project_id: string, title: string, description: string | null, status: TaskStatus, parent_task_attempt: string | null, created_at: string, updated_at: string, };
+export type Task = { id: string, project_id: string, title: string, description: string | null, status: TaskStatus, parent_task_attempt: string | null, repo_path: string | null, created_at: string, updated_at: string, };
 
-export type TaskWithAttemptStatus = { id: string, project_id: string, title: string, description: string | null, status: TaskStatus, parent_task_attempt: string | null, created_at: string, updated_at: string, has_in_progress_attempt: boolean, has_merged_attempt: boolean, last_attempt_failed: boolean, executor: string, };
+export type TaskWithAttemptStatus = { id: string, project_id: string, title: string, description: string | null, status: TaskStatus, parent_task_attempt: string | null, repo_path: string | null, created_at: string, updated_at: string, has_in_progress_attempt: boolean, has_merged_attempt: boolean, last_attempt_failed: boolean, executor: string, };
 
-export type CreateTask = { project_id: string, title: string, description: string | null, parent_task_attempt: string | null, image_ids: Array<string> | null, };
+export type CreateTask = { project_id: string, title: string, description: string | null, parent_task_attempt: string | null, repo_path: string | null, image_ids: Array<string> | null, };
 
-export type UpdateTask = { title: string | null, description: string | null, status: TaskStatus | null, parent_task_attempt: string | null, image_ids: Array<string> | null, };
+export type UpdateTask = { title: string | null, description: string | null, status: TaskStatus | null, parent_task_attempt: string | null, repo_path: string | null, image_ids: Array<string> | null, };
 
 export type Image = { id: string, file_path: string, original_name: string, mime_type: string | null, size_bytes: bigint, hash: string, created_at: string, updated_at: string, };
 
@@ -156,6 +156,10 @@ export type Opencode = { append_prompt: AppendPrompt, model?: string | null, age
 
 export type QwenCode = { append_prompt: AppendPrompt, yolo?: boolean | null, base_command_override?: string | null, additional_params?: Array<string> | null, };
 
+export type ClaudeBrowserChat = null;
+
+export type M365CopilotChat = null;
+
 export type AppendPrompt = string | null;
 
 export type CodingAgentInitialRequest = { prompt: string, 
@@ -169,6 +173,14 @@ export type CodingAgentFollowUpRequest = { prompt: string, session_id: string,
  * Executor profile specification
  */
 executor_profile_id: ExecutorProfileId, };
+
+export type BrowserChatRequest = { message: string, agent_type: BrowserChatAgentType, executor_profile_id: ExecutorProfileId, 
+/**
+ * Optional session ID for follow-up messages to existing browser sessions
+ */
+session_id: string | null, };
+
+export type BrowserChatAgentType = "claude" | "m365";
 
 export type CreateTaskAttemptBody = { task_id: string, 
 /**
@@ -269,11 +281,3 @@ export type ToolResultValueType = { "type": "markdown" } | { "type": "json" };
 export type PatchType = { "type": "NORMALIZED_ENTRY", "content": NormalizedEntry } | { "type": "STDOUT", "content": string } | { "type": "STDERR", "content": string } | { "type": "DIFF", "content": Diff };
 
 export type JsonValue = number | string | boolean | Array<JsonValue> | { [key in string]?: JsonValue } | null;
-
-export type BrowserChatAgentType = "claude" | "m365";
-
-export type BrowserChatRequest = { message: string, agent_type: BrowserChatAgentType, executor_profile_id: ExecutorProfileId, session_id: string | null, };
-
-export type ClaudeBrowserChat = {};
-
-export type M365CopilotChat = {};
