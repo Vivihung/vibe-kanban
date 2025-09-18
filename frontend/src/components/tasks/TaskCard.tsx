@@ -143,10 +143,19 @@ export function TaskCard({
             : task.description}
         </p>
       )}
-      {task.repo_path && (
-        <div className="flex items-center gap-1 text-xs text-muted-foreground mt-2">
-          <Folder className="h-3 w-3" />
-          <span className="truncate">{task.repo_path}</span>
+      {(task.repo_path || task.executor_profile_id) && (
+        <div className="space-y-1 mt-2">
+          {task.repo_path && (
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Folder className="h-3 w-3" />
+              <span className="truncate">{task.repo_path}</span>
+            </div>
+          )}
+          {task.executor_profile_id && (
+            <div className="flex items-center gap-1 text-xs text-muted-foreground">
+              <span className="truncate font-medium">Executor: {task.executor_profile_id.executor}</span>
+            </div>
+          )}
         </div>
       )}
     </KanbanCard>

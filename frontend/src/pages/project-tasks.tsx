@@ -204,6 +204,7 @@ export function ProjectTasks() {
           status: newStatus,
           parent_task_attempt: task.parent_task_attempt,
           repo_path: task.repo_path,
+          executor_profile_id: task.executor_profile_id,
           image_ids: null,
         });
         // UI will update via SSE stream

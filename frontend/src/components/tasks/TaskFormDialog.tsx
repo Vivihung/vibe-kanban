@@ -19,7 +19,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { templatesApi, imagesApi } from '@/lib/api';
-import type { TaskStatus, TaskTemplate, ImageResponse } from 'shared/types';
+import { useUserSystem } from '@/components/config-provider';
+import type { TaskStatus, TaskTemplate, ImageResponse, BaseCodingAgent, ExecutorProfileId } from 'shared/types';
 
 interface Task {
   id: string;
@@ -28,6 +29,7 @@ interface Task {
   description: string | null;
   status: TaskStatus;
   repo_path?: string | null;
+  executor_profile_id?: ExecutorProfileId | null;
   created_at: string;
   updated_at: string;
 }
@@ -43,20 +45,23 @@ interface TaskFormDialogProps {
     title: string,
     description: string,
     repoPath?: string,
-    imageIds?: string[]
+    imageIds?: string[],
+    executorProfileId?: ExecutorProfileId | null
   ) => Promise<void>;
   onCreateAndStartTask?: (
     title: string,
     description: string,
     repoPath?: string,
-    imageIds?: string[]
+    imageIds?: string[],
+    executorProfileId?: ExecutorProfileId | null
   ) => Promise<void>;
   onUpdateTask?: (
     title: string,
     description: string,
     status: TaskStatus,
     repoPath?: string,
-    imageIds?: string[]
+    imageIds?: string[],
+    executorProfileId?: ExecutorProfileId | null
   ) => Promise<void>;
 }
 
@@ -75,6 +80,7 @@ export function TaskFormDialog({
   const [description, setDescription] = useState('');
   const [status, setStatus] = useState<TaskStatus>('todo');
   const [repoPath, setRepoPath] = useState('');
+  const [executorProfileId, setExecutorProfileId] = useState<ExecutorProfileId | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmittingAndStart, setIsSubmittingAndStart] = useState(false);
   const [templates, setTemplates] = useState<TaskTemplate[]>([]);
@@ -85,24 +91,27 @@ export function TaskFormDialog({
     []
   );
 
+  const { profiles } = useUserSystem();
+
   const isEditMode = Boolean(task);
 
   // Check if there's any content that would be lost
   const hasUnsavedChanges = useCallback(() => {
     if (!isEditMode) {
       // Create mode - warn when there's content
-      return title.trim() !== '' || description.trim() !== '' || repoPath.trim() !== '';
+      return title.trim() !== '' || description.trim() !== '' || repoPath.trim() !== '' || executorProfileId !== null;
     } else if (task) {
       // Edit mode - warn when current values differ from original task
       const titleChanged = title.trim() !== task.title.trim();
       const descriptionChanged =
         (description || '').trim() !== (task.description || '').trim();
       const statusChanged = status !== task.status;
+      const executorChanged = JSON.stringify(executorProfileId) !== JSON.stringify(task.executor_profile_id || null);
       const repoPathChanged = repoPath.trim() !== (task.repo_path || '').trim();
-      return titleChanged || descriptionChanged || statusChanged || repoPathChanged;
+      return titleChanged || descriptionChanged || statusChanged || executorChanged || repoPathChanged;
     }
     return false;
-  }, [title, description, repoPath, status, isEditMode, task]);
+  }, [title, description, repoPath, executorProfileId, status, isEditMode, task]);
 
   // Warn on browser/tab close if there are unsaved changes
   useEffect(() => {
@@ -130,6 +139,7 @@ export function TaskFormDialog({
       setDescription(task.description || '');
       setStatus(task.status);
       setRepoPath(task.repo_path || '');
+      setExecutorProfileId(task.executor_profile_id || null);
 
       // Load existing images for the task
       if (isOpen) {
@@ -147,6 +157,7 @@ export function TaskFormDialog({
       setDescription(initialTask.description || '');
       setStatus('todo'); // Always start duplicated tasks as 'todo'
       setRepoPath(initialTask.repo_path || '');
+      setExecutorProfileId(initialTask.executor_profile_id || null);
       setSelectedTemplate('');
       setImages([]);
       setNewlyUploadedImageIds([]);
@@ -156,6 +167,7 @@ export function TaskFormDialog({
       setDescription(initialTemplate.description || '');
       setStatus('todo');
       setRepoPath('');
+      setExecutorProfileId(null);
       setSelectedTemplate('');
     } else {
       // Create mode - reset to defaults
@@ -163,6 +175,7 @@ export function TaskFormDialog({
       setDescription('');
       setStatus('todo');
       setRepoPath('');
+      setExecutorProfileId(null);
       setSelectedTemplate('');
       setImages([]);
       setNewlyUploadedImageIds([]);
@@ -242,9 +255,9 @@ export function TaskFormDialog({
       }
 
       if (isEditMode && onUpdateTask) {
-        await onUpdateTask(title, description, status, repoPath || undefined, imageIds);
+        await onUpdateTask(title, description, status, repoPath || undefined, imageIds, executorProfileId);
       } else if (!isEditMode && onCreateTask) {
-        await onCreateTask(title, description, repoPath || undefined, imageIds);
+        await onCreateTask(title, description, repoPath || undefined, imageIds, executorProfileId);
       }
 
       // Reset form on successful creation
@@ -265,6 +278,7 @@ export function TaskFormDialog({
     title,
     description,
     repoPath,
+    executorProfileId,
     status,
     isEditMode,
     onCreateTask,
@@ -282,7 +296,7 @@ export function TaskFormDialog({
       if (!isEditMode && onCreateAndStartTask) {
         const imageIds =
           newlyUploadedImageIds.length > 0 ? newlyUploadedImageIds : undefined;
-        await onCreateAndStartTask(title, description, repoPath || undefined, imageIds);
+        await onCreateAndStartTask(title, description, repoPath || undefined, imageIds, executorProfileId);
       }
 
       // Reset form on successful creation
@@ -301,6 +315,7 @@ export function TaskFormDialog({
     title,
     description,
     repoPath,
+    executorProfileId,
     isEditMode,
     onCreateAndStartTask,
     onOpenChange,
@@ -437,6 +452,44 @@ export function TaskFormDialog({
               />
               <p className="text-xs text-muted-foreground mt-1">
                 Local absolute path to a repository for coding agent tasks running in containers
+              </p>
+            </div>
+
+            <div>
+              <Label htmlFor="task-executor" className="text-sm font-medium">
+                Executor Profile (Optional)
+              </Label>
+              <Select
+                value={executorProfileId?.executor || 'default'}
+                onValueChange={(value) => {
+                  if (value === 'default') {
+                    setExecutorProfileId(null);
+                  } else {
+                    setExecutorProfileId({
+                      executor: value as BaseCodingAgent,
+                      variant: null
+                    });
+                  }
+                }}
+                disabled={isSubmitting || isSubmittingAndStart}
+              >
+                <SelectTrigger className="mt-1.5">
+                  <SelectValue placeholder="Default executor" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">Default executor</SelectItem>
+                  {profiles &&
+                    Object.keys(profiles)
+                      .sort()
+                      .map((agentKey) => (
+                        <SelectItem key={agentKey} value={agentKey}>
+                          {agentKey}
+                        </SelectItem>
+                      ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground mt-1">
+                Choose a specific executor for this task, or leave as default to use project settings
               </p>
             </div>
 

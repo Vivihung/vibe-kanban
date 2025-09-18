@@ -32,32 +32,45 @@ pub struct TaskQuery {
 }
 
 /// Validates a repository path for multi-repo container execution
+/// Note: Only validates path format since the actual path exists on the container host,
+/// not inside the vibe-kanban container
 fn validate_repo_path(repo_path: &str) -> Result<(), ApiError> {
-    let path = Path::new(repo_path);
+    // Handle JSON-escaped backslashes for Windows paths
+    let normalized_path = repo_path.replace("\\\\", "\\");
 
-    // Must be absolute path
-    if !path.is_absolute() {
-        return Err(ApiError::BadRequest(
-            "repo_path must be an absolute path".to_string(),
-        ));
-    }
+    tracing::debug!("Validating repo_path: original='{}', normalized='{}'", repo_path, normalized_path);
 
-    // Must exist and be directory
-    if !path.exists() {
+    // Check if path is absolute using cross-platform logic
+    let is_absolute = Path::new(&normalized_path).is_absolute() ||
+        // Handle Windows-style paths on any platform (for cross-platform container scenarios)
+        is_windows_absolute_path(&normalized_path);
+
+    if !is_absolute {
         return Err(ApiError::BadRequest(format!(
-            "repo_path does not exist: {}",
-            repo_path
+            "repo_path must be an absolute path. Got: '{}' (normalized: '{}')",
+            repo_path,
+            normalized_path
         )));
     }
 
-    if !path.is_dir() {
-        return Err(ApiError::BadRequest(format!(
-            "repo_path must be a directory: {}",
-            repo_path
-        )));
-    }
+    // Skip existence and directory checks since the path is on the container host,
+    // not accessible from within the vibe-kanban container
 
     Ok(())
+}
+
+/// Check if a path is a Windows absolute path (e.g., C:\, D:\path)
+/// Works on any platform to handle cross-platform scenarios
+fn is_windows_absolute_path(path: &str) -> bool {
+    if path.len() < 3 {
+        return false;
+    }
+
+    let chars: Vec<char> = path.chars().collect();
+    // Check for pattern like "C:\" or "C:/"
+    chars[0].is_ascii_alphabetic() &&
+    chars[1] == ':' &&
+    (chars[2] == '\\' || chars[2] == '/')
 }
 
 pub async fn get_tasks(
@@ -161,8 +174,11 @@ pub async fn create_task_and_start(
         )
         .await;
 
-    // use the default executor profile and the current branch for the task attempt
-    let executor_profile_id = deployment.config().read().await.executor_profile.clone();
+    // use the task executor profile if specified, otherwise use the default executor profile
+    let executor_profile_id = task.executor_profile_id.clone().unwrap_or_else(|| {
+        deployment.config().blocking_read().executor_profile.clone()
+    });
+
     let project = Project::find_by_id(&deployment.db().pool, payload.project_id)
         .await?
         .ok_or(ApiError::Database(SqlxError::RowNotFound))?;
@@ -208,12 +224,13 @@ pub async fn create_task_and_start(
         status: task.status,
         parent_task_attempt: task.parent_task_attempt,
         repo_path: task.repo_path,
+        executor_profile_id: task.executor_profile_id,
         created_at: task.created_at,
         updated_at: task.updated_at,
         has_in_progress_attempt: true,
         has_merged_attempt: false,
         last_attempt_failed: false,
-        executor: task_attempt.executor,
+        executor: task_attempt.executor.to_string(),
     })))
 }
 
@@ -235,6 +252,7 @@ pub async fn update_task(
         .parent_task_attempt
         .or(existing_task.parent_task_attempt);
     let repo_path = payload.repo_path.or(existing_task.repo_path.clone());
+    let executor_profile_id = payload.executor_profile_id.or(existing_task.executor_profile_id.clone());
 
     // Check if task status is changing to Done or Cancelled
     let status_changed_to_terminal = existing_task.status != status 
@@ -249,6 +267,7 @@ pub async fn update_task(
         status.clone(),
         parent_task_attempt,
         repo_path,
+        executor_profile_id,
     )
     .await?;
 
@@ -371,4 +390,37 @@ pub fn router(deployment: &DeploymentImpl) -> Router<DeploymentImpl> {
 
     // mount under /projects/:project_id/tasks
     Router::new().nest("/tasks", inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_windows_absolute_path() {
+        // Valid Windows absolute paths
+        assert!(is_windows_absolute_path("C:\\"));
+        assert!(is_windows_absolute_path("C:\\Users"));
+        assert!(is_windows_absolute_path("C:\\Users\\vivihung\\source\\repos\\pet-adoption-matchmaker"));
+        assert!(is_windows_absolute_path("D:/path/to/repo"));
+        assert!(is_windows_absolute_path("Z:\\"));
+
+        // Invalid paths
+        assert!(!is_windows_absolute_path("C:"));
+        assert!(!is_windows_absolute_path("CC:\\path"));
+        assert!(!is_windows_absolute_path("1:\\path"));
+        assert!(!is_windows_absolute_path("/unix/path"));
+        assert!(!is_windows_absolute_path("relative/path"));
+        assert!(!is_windows_absolute_path(""));
+        assert!(!is_windows_absolute_path("C"));
+    }
+
+    #[test]
+    fn test_json_escaped_paths() {
+        // Test that JSON-escaped paths get normalized correctly
+        let escaped_path = "C:\\\\Users\\\\vivihung\\\\source\\\\repos\\\\pet-adoption-matchmaker";
+        let normalized = escaped_path.replace("\\\\", "\\");
+        assert_eq!(normalized, "C:\\Users\\vivihung\\source\\repos\\pet-adoption-matchmaker");
+        assert!(is_windows_absolute_path(&normalized));
+    }
 }

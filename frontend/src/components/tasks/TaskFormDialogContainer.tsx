@@ -5,7 +5,7 @@ import { TaskFormDialog } from './TaskFormDialog';
 import { useTaskDialog } from '@/contexts/task-dialog-context';
 import { useProject } from '@/contexts/project-context';
 import { tasksApi } from '@/lib/api';
-import type { TaskStatus, CreateTask } from 'shared/types';
+import type { TaskStatus, CreateTask, ExecutorProfileId } from 'shared/types';
 
 /**
  * Container component that bridges the TaskDialogContext with TaskFormDialog
@@ -70,7 +70,7 @@ export function TaskFormDialogContainer() {
   });
 
   const handleCreateTask = useCallback(
-    async (title: string, description: string, repoPath?: string, imageIds?: string[]) => {
+    async (title: string, description: string, repoPath?: string, imageIds?: string[], executorProfileId?: ExecutorProfileId | null) => {
       if (!projectId) return;
 
       createTaskMutation.mutate({
@@ -79,6 +79,7 @@ export function TaskFormDialogContainer() {
         description: description || null,
         parent_task_attempt: null,
         repo_path: repoPath || null,
+        executor_profile_id: executorProfileId || null,
         image_ids: imageIds || null,
       });
     },
@@ -86,7 +87,7 @@ export function TaskFormDialogContainer() {
   );
 
   const handleCreateAndStartTask = useCallback(
-    async (title: string, description: string, repoPath?: string, imageIds?: string[]) => {
+    async (title: string, description: string, repoPath?: string, imageIds?: string[], executorProfileId?: ExecutorProfileId | null) => {
       if (!projectId) return;
 
       createAndStartTaskMutation.mutate({
@@ -95,6 +96,7 @@ export function TaskFormDialogContainer() {
         description: description || null,
         parent_task_attempt: null,
         repo_path: repoPath || null,
+        executor_profile_id: executorProfileId || null,
         image_ids: imageIds || null,
       });
     },
@@ -107,7 +109,8 @@ export function TaskFormDialogContainer() {
       description: string,
       status: TaskStatus,
       repoPath?: string,
-      imageIds?: string[]
+      imageIds?: string[],
+      executorProfileId?: ExecutorProfileId | null
     ) => {
       if (!dialogState.task) return;
 
@@ -119,6 +122,7 @@ export function TaskFormDialogContainer() {
           status,
           parent_task_attempt: null,
           repo_path: repoPath || null,
+          executor_profile_id: executorProfileId || null,
           image_ids: imageIds || null,
         },
       });

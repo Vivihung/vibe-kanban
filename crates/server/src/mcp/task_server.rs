@@ -271,6 +271,7 @@ impl TaskServer {
             description: description.clone(),
             parent_task_attempt: None,
             repo_path: None,
+            executor_profile_id: None,
             image_ids: None,
         };
 
@@ -584,6 +585,7 @@ impl TaskServer {
             new_status,
             new_parent_task_attempt,
             current_task.repo_path,
+            current_task.executor_profile_id,
         )
         .await
         {

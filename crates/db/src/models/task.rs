@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
+use executors::profile::ExecutorProfileId;
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, SqlitePool, Type};
+use sqlx::{FromRow, SqlitePool, Type, Row, sqlite::SqliteRow};
 use ts_rs::TS;
 use uuid::Uuid;
 
@@ -17,7 +18,7 @@ pub enum TaskStatus {
     Cancelled,
 }
 
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct Task {
     pub id: Uuid,
     pub project_id: Uuid, // Foreign key to Project
@@ -26,6 +27,7 @@ pub struct Task {
     pub status: TaskStatus,
     pub parent_task_attempt: Option<Uuid>, // Foreign key to parent TaskAttempt
     pub repo_path: Option<String>, // Local repository path for container execution
+    pub executor_profile_id: Option<ExecutorProfileId>, // Executor profile for this task
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -39,6 +41,7 @@ pub struct TaskWithAttemptStatus {
     pub status: TaskStatus,
     pub parent_task_attempt: Option<Uuid>,
     pub repo_path: Option<String>,
+    pub executor_profile_id: Option<ExecutorProfileId>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub has_in_progress_attempt: bool,
@@ -54,6 +57,7 @@ pub struct CreateTask {
     pub description: Option<String>,
     pub parent_task_attempt: Option<Uuid>,
     pub repo_path: Option<String>,
+    pub executor_profile_id: Option<ExecutorProfileId>,
     pub image_ids: Option<Vec<Uuid>>,
 }
 
@@ -64,10 +68,38 @@ pub struct UpdateTask {
     pub status: Option<TaskStatus>,
     pub parent_task_attempt: Option<Uuid>,
     pub repo_path: Option<String>,
+    pub executor_profile_id: Option<ExecutorProfileId>,
     pub image_ids: Option<Vec<Uuid>>,
 }
 
+impl FromRow<'_, SqliteRow> for Task {
+    fn from_row(row: &SqliteRow) -> Result<Self, sqlx::Error> {
+        Ok(Task {
+            id: row.try_get("id")?,
+            project_id: row.try_get("project_id")?,
+            title: row.try_get("title")?,
+            description: row.try_get("description")?,
+            status: row.try_get("status")?,
+            parent_task_attempt: row.try_get("parent_task_attempt")?,
+            repo_path: row.try_get("repo_path")?,
+            executor_profile_id: Self::executor_profile_from_json(row.try_get("executor_profile_id")?),
+            created_at: row.try_get("created_at")?,
+            updated_at: row.try_get("updated_at")?,
+        })
+    }
+}
+
 impl Task {
+    /// Convert JSON string to ExecutorProfileId
+    fn executor_profile_from_json(json_str: Option<String>) -> Option<ExecutorProfileId> {
+        json_str.and_then(|s| serde_json::from_str(&s).ok())
+    }
+
+    /// Convert ExecutorProfileId to JSON string
+    fn executor_profile_to_json(profile: &Option<ExecutorProfileId>) -> Option<String> {
+        profile.as_ref().and_then(|p| serde_json::to_string(p).ok())
+    }
+
     pub fn to_prompt(&self) -> String {
         if let Some(description) = &self.description {
             format!("Title: {}\n\nDescription:{}", &self.title, description)
@@ -93,6 +125,7 @@ impl Task {
   t.status                        AS "status!: TaskStatus",
   t.parent_task_attempt           AS "parent_task_attempt: Uuid",
   t.repo_path,
+  t.executor_profile_id           AS "executor_profile_id: String",
   t.created_at                    AS "created_at!: DateTime<Utc>",
   t.updated_at                    AS "updated_at!: DateTime<Utc>",
 
@@ -144,6 +177,7 @@ ORDER BY t.created_at DESC"#,
                 status: rec.status,
                 parent_task_attempt: rec.parent_task_attempt,
                 repo_path: rec.repo_path,
+                executor_profile_id: Self::executor_profile_from_json(rec.executor_profile_id),
                 created_at: rec.created_at,
                 updated_at: rec.updated_at,
                 has_in_progress_attempt: rec.has_in_progress_attempt != 0,
@@ -157,27 +191,29 @@ ORDER BY t.created_at DESC"#,
     }
 
     pub async fn find_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<Self>, sqlx::Error> {
-        sqlx::query_as!(
-            Task,
-            r#"SELECT id as "id!: Uuid", project_id as "project_id!: Uuid", title, description, status as "status!: TaskStatus", parent_task_attempt as "parent_task_attempt: Uuid", repo_path, created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>"
+        sqlx::query(
+            r#"SELECT id, project_id, title, description, status, parent_task_attempt, repo_path, executor_profile_id, created_at, updated_at
                FROM tasks
                WHERE id = $1"#,
-            id
         )
+        .bind(id)
         .fetch_optional(pool)
-        .await
+        .await?
+        .map(|row| Self::from_row(&row))
+        .transpose()
     }
 
     pub async fn find_by_rowid(pool: &SqlitePool, rowid: i64) -> Result<Option<Self>, sqlx::Error> {
-        sqlx::query_as!(
-            Task,
-            r#"SELECT id as "id!: Uuid", project_id as "project_id!: Uuid", title, description, status as "status!: TaskStatus", parent_task_attempt as "parent_task_attempt: Uuid", repo_path, created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>"
+        sqlx::query(
+            r#"SELECT id, project_id, title, description, status, parent_task_attempt, repo_path, executor_profile_id, created_at, updated_at
                FROM tasks
                WHERE rowid = $1"#,
-            rowid
         )
+        .bind(rowid)
         .fetch_optional(pool)
-        .await
+        .await?
+        .map(|row| Self::from_row(&row))
+        .transpose()
     }
 
     pub async fn find_by_id_and_project_id(
@@ -185,16 +221,17 @@ ORDER BY t.created_at DESC"#,
         id: Uuid,
         project_id: Uuid,
     ) -> Result<Option<Self>, sqlx::Error> {
-        sqlx::query_as!(
-            Task,
-            r#"SELECT id as "id!: Uuid", project_id as "project_id!: Uuid", title, description, status as "status!: TaskStatus", parent_task_attempt as "parent_task_attempt: Uuid", repo_path, created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>"
+        sqlx::query(
+            r#"SELECT id, project_id, title, description, status, parent_task_attempt, repo_path, executor_profile_id, created_at, updated_at
                FROM tasks
                WHERE id = $1 AND project_id = $2"#,
-            id,
-            project_id
         )
+        .bind(id)
+        .bind(project_id)
         .fetch_optional(pool)
-        .await
+        .await?
+        .map(|row| Self::from_row(&row))
+        .transpose()
     }
 
     pub async fn create(
@@ -202,21 +239,25 @@ ORDER BY t.created_at DESC"#,
         data: &CreateTask,
         task_id: Uuid,
     ) -> Result<Self, sqlx::Error> {
-        sqlx::query_as!(
-            Task,
-            r#"INSERT INTO tasks (id, project_id, title, description, status, parent_task_attempt, repo_path)
-               VALUES ($1, $2, $3, $4, $5, $6, $7)
-               RETURNING id as "id!: Uuid", project_id as "project_id!: Uuid", title, description, status as "status!: TaskStatus", parent_task_attempt as "parent_task_attempt: Uuid", repo_path, created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>""#,
-            task_id,
-            data.project_id,
-            data.title,
-            data.description,
-            TaskStatus::Todo as TaskStatus,
-            data.parent_task_attempt,
-            data.repo_path
+        let executor_profile_json = Self::executor_profile_to_json(&data.executor_profile_id);
+
+        let row = sqlx::query(
+            r#"INSERT INTO tasks (id, project_id, title, description, status, parent_task_attempt, repo_path, executor_profile_id)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+               RETURNING id, project_id, title, description, status, parent_task_attempt, repo_path, executor_profile_id, created_at, updated_at"#,
         )
+        .bind(task_id)
+        .bind(data.project_id)
+        .bind(&data.title)
+        .bind(&data.description)
+        .bind(TaskStatus::Todo)
+        .bind(data.parent_task_attempt)
+        .bind(&data.repo_path)
+        .bind(executor_profile_json)
         .fetch_one(pool)
-        .await
+        .await?;
+
+        Ok(Self::from_row(&row)?)
     }
 
     pub async fn update(
@@ -228,23 +269,28 @@ ORDER BY t.created_at DESC"#,
         status: TaskStatus,
         parent_task_attempt: Option<Uuid>,
         repo_path: Option<String>,
+        executor_profile_id: Option<ExecutorProfileId>,
     ) -> Result<Self, sqlx::Error> {
-        sqlx::query_as!(
-            Task,
+        let executor_profile_json = Self::executor_profile_to_json(&executor_profile_id);
+
+        let row = sqlx::query(
             r#"UPDATE tasks
-               SET title = $3, description = $4, status = $5, parent_task_attempt = $6, repo_path = $7
+               SET title = $3, description = $4, status = $5, parent_task_attempt = $6, repo_path = $7, executor_profile_id = $8
                WHERE id = $1 AND project_id = $2
-               RETURNING id as "id!: Uuid", project_id as "project_id!: Uuid", title, description, status as "status!: TaskStatus", parent_task_attempt as "parent_task_attempt: Uuid", repo_path, created_at as "created_at!: DateTime<Utc>", updated_at as "updated_at!: DateTime<Utc>""#,
-            id,
-            project_id,
-            title,
-            description,
-            status,
-            parent_task_attempt,
-            repo_path
+               RETURNING id, project_id, title, description, status, parent_task_attempt, repo_path, executor_profile_id, created_at, updated_at"#,
         )
+        .bind(id)
+        .bind(project_id)
+        .bind(&title)
+        .bind(&description)
+        .bind(status)
+        .bind(parent_task_attempt)
+        .bind(&repo_path)
+        .bind(executor_profile_json)
         .fetch_one(pool)
-        .await
+        .await?;
+
+        Ok(Self::from_row(&row)?)
     }
 
     pub async fn update_status(
@@ -289,9 +335,8 @@ ORDER BY t.created_at DESC"#,
         attempt_id: Uuid,
     ) -> Result<Vec<Self>, sqlx::Error> {
         // Find both children and parent for this attempt
-        sqlx::query_as!(
-            Task,
-            r#"SELECT DISTINCT t.id as "id!: Uuid", t.project_id as "project_id!: Uuid", t.title, t.description, t.status as "status!: TaskStatus", t.parent_task_attempt as "parent_task_attempt: Uuid", t.repo_path, t.created_at as "created_at!: DateTime<Utc>", t.updated_at as "updated_at!: DateTime<Utc>"
+        let rows = sqlx::query(
+            r#"SELECT DISTINCT t.id, t.project_id, t.title, t.description, t.status, t.parent_task_attempt, t.repo_path, t.executor_profile_id, t.created_at, t.updated_at
                FROM tasks t
                WHERE (
                    -- Find children: tasks that have this attempt as parent
@@ -307,9 +352,11 @@ ORDER BY t.created_at DESC"#,
                -- Exclude the current task itself to prevent circular references
                AND t.id != (SELECT task_id FROM task_attempts WHERE id = $1)
                ORDER BY t.created_at DESC"#,
-            attempt_id,
         )
+        .bind(attempt_id)
         .fetch_all(pool)
-        .await
+        .await?;
+
+        rows.iter().map(|row| Self::from_row(row)).collect()
     }
 }

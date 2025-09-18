@@ -219,16 +219,17 @@ pub async fn follow_up(
         ))),
     }?;
 
-    let executor_profile_id = ExecutorProfileId {
-        executor: initial_executor_profile_id.executor,
-        variant: payload.variant,
-    };
-
     // Get parent task
     let task = task_attempt
         .parent_task(&deployment.db().pool)
         .await?
         .ok_or(SqlxError::RowNotFound)?;
+
+    // Use task executor profile if specified, otherwise use the initial executor
+    let executor_profile_id = task.executor_profile_id.clone().unwrap_or_else(|| ExecutorProfileId {
+        executor: initial_executor_profile_id.executor,
+        variant: payload.variant,
+    });
 
     // Get parent project
     let project = task
