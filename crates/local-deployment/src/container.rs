@@ -649,15 +649,24 @@ impl LocalContainerService {
         let config = ContainerConfig {
             image: Some(image_name.to_string()),
             working_dir: Some("/workspace".to_string()),
+            // Use the default CMD from the Dockerfile, but ensure container stays running
+            // In production, this would be overridden when executing specific commands
+            cmd: Some(vec!["/bin/bash".to_string()]),
+            tty: Some(true), // Allocate a pseudo-TTY to keep bash running
+            attach_stdin: Some(true), // Attach to STDIN
             host_config: Some(HostConfig {
                 binds: Some(vec![
                     format!("{}:/workspace", repo_path)
                 ]),
-                auto_remove: Some(true),
+                auto_remove: Some(true), // Auto-remove when container stops
                 ..Default::default()
             }),
             ..Default::default()
         };
+
+        // Debug: Log the container configuration
+        tracing::info!("Creating container with config: image={}, working_dir={:?}, binds={:?}",
+            image_name, config.working_dir, config.host_config.as_ref().and_then(|hc| hc.binds.as_ref()));
 
         let container = docker
             .create_container(Some(CreateContainerOptions {
@@ -667,10 +676,12 @@ impl LocalContainerService {
             .await
             .map_err(|e| ContainerError::Other(anyhow!("Failed to create container: {}", e)))?;
 
+        tracing::info!("Created container with ID: {}", container.id);
+
         docker.start_container::<String>(&container.id, None).await
             .map_err(|e| ContainerError::Other(anyhow!("Failed to start container: {}", e)))?;
 
-        tracing::info!("Created and started Docker container: {}", container.id);
+        tracing::info!("Started Docker container: {}", container.id);
         Ok(container.id)
     }
 
@@ -1596,6 +1607,7 @@ mod tests {
     use db::models::task_attempt::TaskAttempt;
     use std::collections::HashMap;
     use services::services::{config::Config, git::GitService, image::ImageService};
+    use bollard::Docker;
     use tempfile;
 
     /// Mock Docker client that records method calls for testing
@@ -1778,26 +1790,296 @@ mod tests {
         assert!(dir_name.len() > "vk-".len() + short_id.len());
     }
 
-    // Integration test that would require actual Docker setup
+    /// Full integration test that actually creates a Docker container
     #[tokio::test]
-    #[ignore] // Ignored by default since it requires Docker
-    async fn test_create_docker_container_integration() {
-        // This test would require:
-        // 1. Docker daemon running
-        // 2. Proper test database setup with task/project data
-        // 3. Test devcontainer configuration
-
-        // For now, this serves as documentation of what a full integration test would look like
-        let (service, _mock) = create_test_service(false).await;
-        let task_attempt = create_test_task_attempt();
-        let repo_path = "/tmp/test_repo"; // Would need actual test repo
-
-        // This would fail in CI without Docker, so it's ignored
-        if std::env::var("RUN_DOCKER_TESTS").is_ok() {
-            let result = service.create_docker_container(&task_attempt, repo_path).await;
-            // Would assert success and verify container creation
-            println!("Docker container test result: {:?}", result);
+    #[ignore] // Ignored by default since it requires Docker daemon
+    async fn test_create_docker_container_full_integration() {
+        // Skip test if Docker integration is not enabled
+        if std::env::var("RUN_DOCKER_TESTS").is_err() {
+            println!("Skipping Docker integration test - set RUN_DOCKER_TESTS=1 to enable");
+            return;
         }
+
+        // Check if Docker is available
+        if Docker::connect_with_socket_defaults().is_err() {
+            println!("Docker daemon not available - skipping integration test");
+            return;
+        }
+
+        // Create test directory with a minimal devcontainer setup
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let test_repo = temp_dir.path().join("test_repo");
+        std::fs::create_dir_all(&test_repo).expect("Failed to create test repo");
+
+        // Set up minimal test repository
+        setup_test_repository(&test_repo).await;
+
+        // Create service with real Docker client
+        let (service, _mock) = create_test_service_with_docker(false).await;
+
+        // Create test entities in database
+        let (task_attempt, _task, _project) = create_test_entities(&service.db, &test_repo).await;
+
+        // Before test: list existing containers for comparison
+        if let Some(docker) = &service.docker {
+            let containers_before = docker.list_containers::<String>(None).await.unwrap_or_default();
+            println!("📊 Containers before test: {}", containers_before.len());
+        }
+
+        // Test the actual container creation
+        let result = service.create_docker_container(&task_attempt, &test_repo.to_string_lossy()).await;
+
+        match result {
+            Ok(container_id) => {
+                println!("✅ Successfully created Docker container: {}", container_id);
+
+                // Verify container exists and inspect its configuration
+                if let Some(docker) = &service.docker {
+                    // Try to inspect the specific container by ID
+                    match docker.inspect_container(&container_id, None).await {
+                        Ok(container_info) => {
+                            println!("✅ Container found and inspected:");
+                            println!("   • ID: {}", container_info.id.as_deref().unwrap_or("unknown"));
+                            println!("   • State: {:?}", container_info.state.as_ref().map(|s| &s.status));
+                            println!("   • Working Dir: {:?}", container_info.config.as_ref().and_then(|c| c.working_dir.as_ref()));
+
+                            // Check mounts/binds
+                            if let Some(host_config) = &container_info.host_config {
+                                if let Some(binds) = &host_config.binds {
+                                    println!("   • Volume Binds: {:?}", binds);
+                                } else {
+                                    println!("   • ⚠ No volume binds found!");
+                                }
+                            }
+
+                            if let Some(mounts) = &container_info.mounts {
+                                println!("   • Mounts: {} mount(s)", mounts.len());
+                                for mount in mounts {
+                                    println!("     - {} -> {}", mount.source.as_deref().unwrap_or("?"), mount.destination.as_deref().unwrap_or("?"));
+                                }
+                            } else {
+                                println!("   • ⚠ No mounts found!");
+                            }
+
+                            // Clean up
+                            if container_info.state.as_ref().map_or(false, |s| s.running.unwrap_or(false)) {
+                                let _ = docker.stop_container(&container_id, None).await;
+                            }
+                            let _ = docker.remove_container(&container_id, None).await;
+                            println!("✅ Container cleaned up");
+                        }
+                        Err(e) => {
+                            println!("⚠ Could not inspect container {}: {}", container_id, e);
+
+                            // List all containers for debugging
+                            use bollard::container::ListContainersOptions;
+                            let all_containers_opts = ListContainersOptions::<String> {
+                                all: true,
+                                ..Default::default()
+                            };
+                            if let Ok(containers) = docker.list_containers(Some(all_containers_opts)).await {
+                                println!("🔍 All containers in Docker:");
+                                for c in &containers {
+                                    println!("   • {} ({})", c.id.as_deref().unwrap_or("no-id")[..12].to_string(), c.names.as_ref().map(|n| n.join(",")).unwrap_or_default());
+                                }
+
+                                // Check if any container matches by partial ID
+                                for c in &containers {
+                                    if let Some(id) = &c.id {
+                                        if id.starts_with(&container_id[..12]) || container_id.starts_with(&id[..12]) {
+                                            println!("🔍 Found potential match: {}", id);
+                                            if let Ok(info) = docker.inspect_container(id, None).await {
+                                                println!("   • Working Dir: {:?}", info.config.as_ref().and_then(|c| c.working_dir.as_ref()));
+                                                println!("   • Binds: {:?}", info.host_config.as_ref().and_then(|hc| hc.binds.as_ref()));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Verify database was updated with container ID
+                let updated_attempt = TaskAttempt::find_by_id(&service.db.pool, task_attempt.id)
+                    .await
+                    .expect("Failed to fetch updated task attempt")
+                    .expect("Task attempt not found");
+                assert_eq!(updated_attempt.container_ref, Some(container_id.clone()));
+                println!("✓ Database updated with container reference");
+            }
+            Err(e) => {
+                panic!("Failed to create Docker container: {}", e);
+            }
+        }
+    }
+
+    /// Helper to set up a minimal test repository with devcontainer
+    async fn setup_test_repository(repo_path: &std::path::Path) {
+        // Create .devcontainer directory
+        let devcontainer_dir = repo_path.join(".devcontainer");
+        std::fs::create_dir_all(&devcontainer_dir).expect("Failed to create .devcontainer dir");
+
+        // Create minimal Dockerfile
+        let dockerfile_content = r#"FROM alpine:latest
+RUN apk add --no-cache bash curl git
+WORKDIR /workspace
+CMD ["/bin/bash"]
+"#;
+        std::fs::write(devcontainer_dir.join("Dockerfile"), dockerfile_content)
+            .expect("Failed to write Dockerfile");
+
+        // Create devcontainer.json (optional, but good practice)
+        let devcontainer_json = r#"{
+    "name": "Test Container",
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+    "workspaceFolder": "/workspace"
+}
+"#;
+        std::fs::write(devcontainer_dir.join("devcontainer.json"), devcontainer_json)
+            .expect("Failed to write devcontainer.json");
+
+        // Create a simple test file
+        std::fs::write(repo_path.join("README.md"), "# Test Repository\n\nThis is a test repository for Docker container testing.\n")
+            .expect("Failed to write README.md");
+
+        println!("✓ Test repository set up at {:?}", repo_path);
+    }
+
+    /// Helper to create test entities in the database
+    async fn create_test_entities(
+        db: &DBService,
+        repo_path: &std::path::Path,
+    ) -> (TaskAttempt, db::models::task::Task, db::models::project::Project) {
+        use db::models::{project::Project, task::Task};
+
+        // Create test project
+        let project = Project {
+            id: Uuid::new_v4(),
+            name: "Test Project".to_string(),
+            git_repo_path: repo_path.to_path_buf(),
+            setup_script: None,
+            dev_script: None,
+            cleanup_script: None,
+            copy_files: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        // Insert project into database using raw SQL
+        sqlx::query(
+            "INSERT INTO projects (id, name, git_repo_path, setup_script, dev_script, cleanup_script, copy_files, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&project.id)
+        .bind(&project.name)
+        .bind(project.git_repo_path.to_string_lossy().as_ref())
+        .bind(&project.setup_script)
+        .bind(&project.dev_script)
+        .bind(&project.cleanup_script)
+        .bind(&project.copy_files)
+        .bind(&project.created_at)
+        .bind(&project.updated_at)
+        .execute(&db.pool)
+        .await
+        .expect("Failed to insert test project");
+
+        // Create test task with repo_path to trigger Docker usage
+        let task = Task {
+            id: Uuid::new_v4(),
+            project_id: project.id,
+            title: "Test Task".to_string(),
+            description: Some("Test task for Docker container spawning".to_string()),
+            status: db::models::task::TaskStatus::Todo,
+            parent_task_attempt: None,
+            repo_path: Some(repo_path.to_string_lossy().to_string()), // This triggers Docker usage
+            executor_profile_id: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        // Convert executor_profile_id to JSON string for storage
+        let executor_profile_json: Option<String> = task.executor_profile_id.as_ref()
+            .and_then(|p| serde_json::to_string(p).ok());
+
+        // Insert task into database using raw SQL
+        sqlx::query(
+            "INSERT INTO tasks (id, project_id, title, description, status, parent_task_attempt, repo_path, executor_profile_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&task.id)
+        .bind(&task.project_id)
+        .bind(&task.title)
+        .bind(&task.description)
+        .bind(&task.status)  // Bind enum directly, not as i32
+        .bind(&task.parent_task_attempt)
+        .bind(&task.repo_path)
+        .bind(&executor_profile_json)
+        .bind(&task.created_at)
+        .bind(&task.updated_at)
+        .execute(&db.pool)
+        .await
+        .expect("Failed to insert test task");
+
+        // Create test task attempt
+        let task_attempt = TaskAttempt {
+            id: Uuid::new_v4(),
+            task_id: task.id,
+            base_branch: "main".to_string(),
+            container_ref: None,
+            branch: None,
+            executor: "CLAUDE_CODE".to_string(),
+            worktree_deleted: false,
+            setup_completed_at: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        // Insert task attempt into database using raw SQL
+        sqlx::query(
+            "INSERT INTO task_attempts (id, task_id, base_branch, container_ref, branch, executor, worktree_deleted, setup_completed_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&task_attempt.id)
+        .bind(&task_attempt.task_id)
+        .bind(&task_attempt.base_branch)
+        .bind(&task_attempt.container_ref)
+        .bind(&task_attempt.branch)
+        .bind(&task_attempt.executor)
+        .bind(&task_attempt.worktree_deleted)
+        .bind(&task_attempt.setup_completed_at)
+        .bind(&task_attempt.created_at)
+        .bind(&task_attempt.updated_at)
+        .execute(&db.pool)
+        .await
+        .expect("Failed to insert test task attempt");
+
+        println!("✓ Test entities created in database");
+        (task_attempt, task, project)
+    }
+
+    /// Create a test service with real Docker client
+    async fn create_test_service_with_docker(docker_should_fail: bool) -> (LocalContainerService, MockDocker) {
+        let mock_docker = MockDocker::new(docker_should_fail);
+
+        // Create minimal mock dependencies
+        let db = DBService::new().await.expect("Failed to create test DB");
+        let msg_stores = Arc::new(RwLock::new(HashMap::new()));
+        let config = Arc::new(RwLock::new(Config::default()));
+        let git = GitService::new();
+        let image_service = ImageService::new(db.clone().pool).expect("Failed to create ImageService");
+
+        let service = LocalContainerService::new(
+            db,
+            msg_stores,
+            config,
+            git,
+            image_service,
+            None, // analytics
+        );
+
+        // The service will initialize its own Docker client in the constructor
+        // We don't override it for the integration test
+        (service, mock_docker)
     }
 
     /// Test helper to verify the function signature and basic error handling
