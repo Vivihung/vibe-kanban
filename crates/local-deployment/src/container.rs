@@ -1806,6 +1806,12 @@ mod tests {
             return;
         }
 
+        // Check if user wants to keep container running for manual examination
+        let keep_container = std::env::var("KEEP_CONTAINER").is_ok();
+        if keep_container {
+            println!("🔍 KEEP_CONTAINER mode enabled - container will be left running for manual examination");
+        }
+
         // Create test directory with a minimal devcontainer setup
         let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
         let test_repo = temp_dir.path().join("test_repo");
@@ -1861,12 +1867,25 @@ mod tests {
                                 println!("   • ⚠ No mounts found!");
                             }
 
-                            // Clean up
-                            if container_info.state.as_ref().map_or(false, |s| s.running.unwrap_or(false)) {
-                                let _ = docker.stop_container(&container_id, None).await;
+                            // Clean up (unless user wants to keep container for examination)
+                            if keep_container {
+                                println!("🔍 Container left running for manual examination:");
+                                println!("   • Container ID: {}", container_id);
+                                println!("   • Container Name: {}", container_info.name.as_deref().unwrap_or("unknown"));
+                                println!("   • Repository mounted at: /workspace");
+                                println!("   • To examine: docker exec -it {} /bin/bash", &container_id[..12]);
+                                println!("   • To inspect: docker inspect {}", &container_id[..12]);
+                                println!("   • To view logs: docker logs {}", &container_id[..12]);
+                                println!("   • To stop: docker stop {}", &container_id[..12]);
+                                println!("   • To remove: docker rm {}", &container_id[..12]);
+                                println!("   • To remove image: docker rmi vibe-kanban-task-{}", task_attempt.id);
+                            } else {
+                                if container_info.state.as_ref().map_or(false, |s| s.running.unwrap_or(false)) {
+                                    let _ = docker.stop_container(&container_id, None).await;
+                                }
+                                let _ = docker.remove_container(&container_id, None).await;
+                                println!("✅ Container cleaned up");
                             }
-                            let _ = docker.remove_container(&container_id, None).await;
-                            println!("✅ Container cleaned up");
                         }
                         Err(e) => {
                             println!("⚠ Could not inspect container {}: {}", container_id, e);
