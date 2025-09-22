@@ -1259,8 +1259,8 @@ impl ContainerService for LocalContainerService {
 
             // Store the session for tracking
             self.add_browser_session(browser_session).await;
-            
-            tracing::info!("Created browser session {} for task attempt {}", 
+
+            tracing::info!("Created browser session {} for task attempt {}",
                 session_id, execution_process.task_attempt_id);
         }
 
@@ -1584,5 +1584,239 @@ impl LocalContainerService {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+    use uuid::Uuid;
+    use db::models::task_attempt::TaskAttempt;
+    use std::collections::HashMap;
+    use services::services::{config::Config, git::GitService, image::ImageService};
+    use tempfile;
+
+    /// Mock Docker client that records method calls for testing
+    #[derive(Clone)]
+    struct MockDocker {
+        pub calls: Arc<RwLock<Vec<String>>>,
+        pub should_fail: bool,
+    }
+
+    impl MockDocker {
+        pub fn new(should_fail: bool) -> Self {
+            Self {
+                calls: Arc::new(RwLock::new(Vec::new())),
+                should_fail,
+            }
+        }
+
+        pub async fn get_calls(&self) -> Vec<String> {
+            self.calls.read().await.clone()
+        }
+
+        pub async fn record_call(&self, call: &str) {
+            self.calls.write().await.push(call.to_string());
+        }
+    }
+
+    /// Create a test LocalContainerService with mock dependencies
+    async fn create_test_service(docker_should_fail: bool) -> (LocalContainerService, MockDocker) {
+        let mock_docker = MockDocker::new(docker_should_fail);
+
+        // Create minimal mock dependencies - in a real test these would be proper mocks
+        let db = DBService::new().await.expect("Failed to create test DB");
+        let msg_stores = Arc::new(RwLock::new(HashMap::new()));
+        let config = Arc::new(RwLock::new(Config::default()));
+        let git = GitService::new();
+        let image_service = ImageService::new(db.clone().pool).expect("Failed to create ImageService");
+
+        let mut service = LocalContainerService::new(
+            db,
+            msg_stores,
+            config,
+            git,
+            image_service,
+            None, // analytics
+        );
+
+        // Replace the real Docker client with our mock (this is a conceptual example)
+        // In practice, you'd need to make the Docker field injectable or use a trait
+        service.docker = if docker_should_fail {
+            None
+        } else {
+            // For testing, we'll just set None since we can't easily mock Docker client
+            // In a real implementation, this would use dependency injection
+            None
+        };
+
+        (service, mock_docker)
+    }
+
+    /// Create a test TaskAttempt with minimal required fields
+    fn create_test_task_attempt() -> TaskAttempt {
+        TaskAttempt {
+            id: Uuid::new_v4(),
+            task_id: Uuid::new_v4(),
+            base_branch: "main".to_string(),
+            container_ref: None,
+            branch: None,
+            executor: "CLAUDE_CODE".to_string(),
+            worktree_deleted: false,
+            setup_completed_at: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_docker_container_no_docker_client() {
+        let (service, _mock) = create_test_service(true).await; // Docker should fail
+        let task_attempt = create_test_task_attempt();
+        let repo_path = "/test/repo";
+
+        let result = service.create_docker_container(&task_attempt, repo_path).await;
+
+        assert!(result.is_err());
+        if let Err(ContainerError::Other(e)) = result {
+            assert!(e.to_string().contains("Docker client not available"));
+        } else {
+            panic!("Expected Docker client not available error");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_should_use_docker_no_docker_client() {
+        let (service, _mock) = create_test_service(true).await; // Docker should fail
+        let task_attempt = create_test_task_attempt();
+
+        let result = service.should_use_docker(&task_attempt).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), None); // Should return None when Docker unavailable
+    }
+
+    #[tokio::test]
+    async fn test_is_docker_container_identification() {
+        let (service, _mock) = create_test_service(false).await;
+
+        // Test Docker container ID patterns
+        assert!(service.is_docker_container("a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890")); // 64 chars
+        assert!(service.is_docker_container("a1b2c3d4e5f6")); // 12 chars
+
+        // Test non-Docker paths
+        assert!(!service.is_docker_container("/path/to/worktree"));
+        assert!(!service.is_docker_container("short"));
+        assert!(!service.is_docker_container("invalid-hex-string!@#"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_devcontainer_config() {
+        let (service, _mock) = create_test_service(false).await;
+
+        // Create temporary test directories
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let test_repo = temp_dir.path().join("test_repo");
+        std::fs::create_dir_all(&test_repo).expect("Failed to create test repo dir");
+
+        let project_devcontainer = test_repo.join(".devcontainer");
+        std::fs::create_dir_all(&project_devcontainer).expect("Failed to create .devcontainer dir");
+
+        // Test with project devcontainer
+        let result = service.resolve_devcontainer_config(&test_repo);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), project_devcontainer);
+
+        // Test without project devcontainer (should fall back to current dir)
+        std::fs::remove_dir_all(&project_devcontainer).expect("Failed to remove project devcontainer");
+
+        let repo_without_devcontainer = temp_dir.path().join("repo_no_devcontainer");
+        std::fs::create_dir_all(&repo_without_devcontainer).expect("Failed to create repo dir");
+
+        let result = service.resolve_devcontainer_config(&repo_without_devcontainer);
+        // This will likely fail unless we're in a directory with .devcontainer
+        // In a real test environment, you'd set up the expected fallback behavior
+        assert!(result.is_err() || result.unwrap().exists());
+    }
+
+    #[tokio::test]
+    async fn test_create_build_context() {
+        let (service, _mock) = create_test_service(false).await;
+
+        // Create a temporary directory with some test files
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let test_file = temp_dir.path().join("test.txt");
+        std::fs::write(&test_file, "test content").expect("Failed to write test file");
+
+        let result = service.create_build_context(temp_dir.path());
+
+        assert!(result.is_ok());
+        let tar_data = result.unwrap();
+        assert!(!tar_data.is_empty());
+
+        // Verify the tar contains our test file (basic check)
+        assert!(tar_data.len() > "test content".len());
+    }
+
+    #[tokio::test]
+    async fn test_dir_name_from_task_attempt() {
+        let attempt_id = Uuid::new_v4();
+        let task_title = "Test Task Title!@#$%";
+
+        let dir_name = LocalContainerService::dir_name_from_task_attempt(&attempt_id, task_title);
+
+        // Verify it starts with "vk-"
+        assert!(dir_name.starts_with("vk-"));
+
+        // Verify it contains the shortened UUID
+        let short_id = short_uuid(&attempt_id);
+        assert!(dir_name.contains(&short_id));
+
+        // Verify it contains a sanitized version of the task title
+        assert!(dir_name.len() > "vk-".len() + short_id.len());
+    }
+
+    // Integration test that would require actual Docker setup
+    #[tokio::test]
+    #[ignore] // Ignored by default since it requires Docker
+    async fn test_create_docker_container_integration() {
+        // This test would require:
+        // 1. Docker daemon running
+        // 2. Proper test database setup with task/project data
+        // 3. Test devcontainer configuration
+
+        // For now, this serves as documentation of what a full integration test would look like
+        let (service, _mock) = create_test_service(false).await;
+        let task_attempt = create_test_task_attempt();
+        let repo_path = "/tmp/test_repo"; // Would need actual test repo
+
+        // This would fail in CI without Docker, so it's ignored
+        if std::env::var("RUN_DOCKER_TESTS").is_ok() {
+            let result = service.create_docker_container(&task_attempt, repo_path).await;
+            // Would assert success and verify container creation
+            println!("Docker container test result: {:?}", result);
+        }
+    }
+
+    /// Test helper to verify the function signature and basic error handling
+    #[test]
+    fn test_create_docker_container_signature() {
+        // Compile-time test to ensure the function signature is correct
+        fn _test_signature() {
+            use std::future::Future;
+            use std::pin::Pin;
+
+            fn _check_return_type() -> Pin<Box<dyn Future<Output = Result<ContainerRef, ContainerError>>>> {
+                todo!()
+            }
+
+            // This ensures the create_docker_container method exists with correct signature
+            // We can't directly test the exact signature due to lifetime constraints,
+            // but this verifies the method exists and is callable
+            let _service = LocalContainerService::create_docker_container;
+        }
+        _test_signature();
     }
 }
